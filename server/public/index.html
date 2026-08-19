@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>水弹激光对战 · 控制台</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>🔫 水弹激光对战控制台</h1>
+    <div id="conn-badge" class="badge offline">未连接</div>
+  </header>
+
+  <main>
+    <!-- 左列：对局控制 -->
+    <section class="panel">
+      <h2>对局控制</h2>
+      <form id="create-form" class="row">
+        <input id="match-name" placeholder="对局名称" value="今晚大乱斗" />
+        <select id="match-mode">
+          <option value="tdm">团队竞技</option>
+          <option value="ffa">个人混战</option>
+          <option value="ctf">夺旗战</option>
+        </select>
+        <input id="match-score" type="number" min="1" placeholder="获胜分数" />
+        <button type="submit" class="primary">创建对局</button>
+      </form>
+      <div id="match-list" class="list"></div>
+    </section>
+
+    <!-- 中列：实时计分板 -->
+    <section class="panel wide">
+      <h2>实时计分板 <span id="match-title"></span></h2>
+      <div id="team-scores" class="team-scores"></div>
+      <table id="scoreboard">
+        <thead>
+          <tr>
+            <th>排名</th><th>玩家</th><th>队伍</th><th>击杀</th>
+            <th>死亡</th><th>夺旗</th><th>状态</th><th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <h2>战术地图 <span class="dim" style="font-weight:400;font-size:12px">GPS 玩家位置（仅展示有定位的设备）</span></h2>
+      <canvas id="map-canvas" width="640" height="360"></canvas>
+      <div id="event-feed" class="feed"></div>
+    </section>
+
+    <!-- 右列：设备与战绩 -->
+    <section class="panel">
+      <h2>设备（<span id="dev-count">0</span>）</h2>
+      <div id="dev-list" class="list"></div>
+      <h2>网关（<span id="gw-count">0</span>）</h2>
+      <div id="gw-list" class="list"></div>
+      <h2>历史战绩</h2>
+      <button id="stats-btn" class="secondary">刷新战绩</button>
+      <div id="stats-list" class="list"></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

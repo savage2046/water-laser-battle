@@ -1,0 +1,267 @@
+#include "LaserCodec.h"
+#include "config.h"
+
+LaserCodec laser;
+
+// ---- 两路接收 ISR ----
+static void IRAM_ATTR irEdgeISR940() {
+  uint32_t now = micros();
+  uint8_t lvl = digitalRead(PIN_IR_RX);
+  uint8_t h = laser._head[0];
+  uint8_t next = (h + 1) % LaserCodec::EDGE_BUF;
+  if (next != laser._tail[0]) {
+    laser._edgeTime[0][h] = now;
+    laser._edgeLevel[0][h] = lvl;
+    laser._head[0] = next;
+  }
+}
+
+static void IRAM_ATTR irEdgeISR850() {
+  uint32_t now = micros();
+  uint8_t lvl = digitalRead(PIN_IR_RX_850);
+  uint8_t h = laser._head[1];
+  uint8_t next = (h + 1) % LaserCodec::EDGE_BUF;
+  if (next != laser._tail[1]) {
+    laser._edgeTime[1][h] = now;
+    laser._edgeLevel[1][h] = lvl;
+    laser._head[1] = next;
+  }
+}
+
+void LaserCodec::begin(uint8_t tx940, uint8_t tx850, uint8_t rx940,
+                       uint8_t rx850, uint8_t powerPin) {
+  _tx940 = tx940;
+  _tx850 = tx850;
+  _rx940 = rx940;
+  _rx850 = rx850;
+  _powerPin = powerPin;
+  pinMode(_tx940, OUTPUT);
+  digitalWrite(_tx940, LOW);
+  pinMode(_tx850, OUTPUT);
+  digitalWrite(_tx850, LOW);
+  pinMode(_rx940, INPUT_PULLUP);
+  pinMode(_rx850, INPUT_PULLUP);
+  if (_powerPin != 0xFF) {
+    pinMode(_powerPin, OUTPUT);
+    digitalWrite(_powerPin, LOW);
+  }
+  attachInterrupt(digitalPinToInterrupt(_rx940), irEdgeISR940, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(_rx850), irEdgeISR850, CHANGE);
+  setPowerLevel(DEFAULT_POWER_LEVEL);
+}
+
+// 功率档位：远档拉高 PIN_IR_POWER 切换大电流限流
+void LaserCodec::setPowerLevel(uint8_t level) {
+  _powerLevel = level;
+  if (_powerPin != 0xFF) {
+    digitalWrite(_powerPin, level >= 2 ? HIGH : LOW);
+  }
+}
+
+// 双通道并行位发送状态（每通道独立时钟，发相同数据）
+struct ChanTx {
+  uint8_t pin;
+  uint32_t halfUs;        // 载波半周期（38kHz→13µs，56kHz→9µs）
+  bool level = false;
+  bool carrier = false;
+  bool done = false;
+  uint32_t flipAt = 0;
+  uint32_t phaseUntil = 0;
+  const uint8_t *bytes;
+  uint8_t byteIdx = 0;
+  int8_t bitPos = 7;
+  bool curBit() { return (bytes[byteIdx] >> bitPos) & 1; }
+  void advance() {
+    bitPos--;
+    if (bitPos < 0) {
+      bitPos = 7;
+      byteIdx++;
+      if (byteIdx >= 5) done = true;
+    }
+  }
+};
+
+void LaserCodec::sendFrame(const LaserFrame &f) {
+  _txBusy = true;
+
+  // 引导码：两通道同时 9ms 载波 + 4.5ms 间隔（并行）
+  uint32_t t0 = micros();
+  uint32_t flip940 = t0, flip850 = t0;
+  bool lvl940 = false, lvl850 = false;
+  uint32_t carrierUntil = t0 + IR_PREAMBLE_US;
+  while (micros() < carrierUntil) {
+    uint32_t now = micros();
+    if (now >= flip940) {
+      lvl940 = !lvl940;
+      digitalWrite(_tx940, lvl940);
+      flip940 = now + 13;
+    }
+    if (now >= flip850) {
+      lvl850 = !lvl850;
+      digitalWrite(_tx850, lvl850);
+      flip850 = now + 9;
+    }
+  }
+  digitalWrite(_tx940, LOW);
+  digitalWrite(_tx850, LOW);
+  delayMicroseconds(IR_PREAMBLE_GAP_US);
+
+  // 完整 40bit 帧（两通道相同内容）：
+  // B0=playerId高, B1=playerId低, B2=weapon/team/res, B3=shotSeq, chk
+  uint8_t b0 = f.playerId >> 8;
+  uint8_t b1 = f.playerId & 0xFF;
+  uint8_t b2 = ((f.weaponId & 0x0F) << 4) | ((f.team & 0x03) << 2);
+  uint8_t b3 = f.shotSeq;
+  uint8_t chk = ~(uint8_t)(b0 ^ b1 ^ b2 ^ b3);
+  uint8_t bytes[5] = { b0, b1, b2, b3, chk };
+
+  ChanTx chA = { _tx940, 13, false, false, false, 0, 0, bytes, 0, 7 };
+  ChanTx chB = { _tx850, 9, false, false, false, 0, 0, bytes, 0, 7 };
+  uint32_t now0 = micros();
+  chA.carrier = true;  chA.flipAt = now0;  chA.phaseUntil = now0 + IR_BIT_HIGH_US;
+  chB.carrier = true;  chB.flipAt = now0;  chB.phaseUntil = now0 + IR_BIT_HIGH_US;
+
+  while (!chA.done || !chB.done) {
+    uint32_t now = micros();
+    if (!chA.done) {
+      if (chA.carrier) {
+        if (now >= chA.flipAt) {
+          chA.level = !chA.level;
+          digitalWrite(chA.pin, chA.level);
+          chA.flipAt = now + chA.halfUs;
+        }
+        if (now >= chA.phaseUntil) {
+          chA.carrier = false;
+          chA.level = false;
+          digitalWrite(chA.pin, LOW);
+          chA.phaseUntil = now + (chA.curBit() ? IR_BIT_ONE_GAP_US : IR_BIT_ZERO_GAP_US);
+        }
+      } else {
+        if (now >= chA.phaseUntil) {
+          chA.advance();
+          if (chA.done) {
+            digitalWrite(chA.pin, LOW);
+          } else {
+            chA.carrier = true;
+            chA.flipAt = now;
+            chA.phaseUntil = now + IR_BIT_HIGH_US;
+          }
+        }
+      }
+    }
+    if (!chB.done) {
+      if (chB.carrier) {
+        if (now >= chB.flipAt) {
+          chB.level = !chB.level;
+          digitalWrite(chB.pin, chB.level);
+          chB.flipAt = now + chB.halfUs;
+        }
+        if (now >= chB.phaseUntil) {
+          chB.carrier = false;
+          chB.level = false;
+          digitalWrite(chB.pin, LOW);
+          chB.phaseUntil = now + (chB.curBit() ? IR_BIT_ONE_GAP_US : IR_BIT_ZERO_GAP_US);
+        }
+      } else {
+        if (now >= chB.phaseUntil) {
+          chB.advance();
+          if (chB.done) {
+            digitalWrite(chB.pin, LOW);
+          } else {
+            chB.carrier = true;
+            chB.flipAt = now;
+            chB.phaseUntil = now + IR_BIT_HIGH_US;
+          }
+        }
+      }
+    }
+  }
+  _txBusy = false;
+}
+
+// 单通道解码完整 40bit 帧，返回 true 且 out 有效表示校验通过；outChannel 填通道号
+static bool decodeChan40(LaserCodec::State &st, uint32_t &lastEdgeUs,
+                         uint64_t &bitBuf, uint8_t &bitCnt,
+                         const volatile uint32_t *edgeTime,
+                         const volatile uint8_t *edgeLevel,
+                         volatile uint8_t &head, volatile uint8_t &tail,
+                         LaserFrame &out, uint8_t outChannel) {
+  while (tail != head) {
+    uint32_t t = edgeTime[tail];
+    uint8_t lvl = edgeLevel[tail];
+    tail = (tail + 1) % LaserCodec::EDGE_BUF;
+
+    uint32_t dt = t - lastEdgeUs;
+    lastEdgeUs = t;
+
+    switch (st) {
+      case LaserCodec::S_IDLE:
+        if (lvl == LOW && dt > IR_PREAMBLE_US - IR_PULSE_TOL_US &&
+            dt < IR_PREAMBLE_US + IR_PULSE_TOL_US) {
+          st = LaserCodec::S_PREAMBLE;
+        }
+        break;
+      case LaserCodec::S_PREAMBLE:
+        if (lvl == HIGH && dt > IR_PREAMBLE_GAP_US - IR_PULSE_TOL_US &&
+            dt < IR_PREAMBLE_GAP_US + IR_PULSE_TOL_US) {
+          st = LaserCodec::S_DATA;
+          bitBuf = 0;
+          bitCnt = 0;
+        } else {
+          st = LaserCodec::S_IDLE;
+        }
+        break;
+      case LaserCodec::S_DATA:
+        if (lvl == LOW && dt > IR_BIT_HIGH_US - IR_PULSE_TOL_US &&
+            dt < IR_BIT_HIGH_US + IR_PULSE_TOL_US) {
+          st = LaserCodec::S_GAP;
+        } else {
+          st = LaserCodec::S_IDLE;
+        }
+        break;
+      case LaserCodec::S_GAP:
+        if (lvl == HIGH) {
+          bitBuf = (bitBuf << 1) | (dt > IR_GAP_THRESH_US ? 1 : 0);
+          bitCnt++;
+          if (bitCnt >= 40) {
+            st = LaserCodec::S_IDLE;
+            bitCnt = 0;
+            uint8_t b0 = (bitBuf >> 32) & 0xFF;
+            uint8_t b1 = (bitBuf >> 24) & 0xFF;
+            uint8_t b2 = (bitBuf >> 16) & 0xFF;
+            uint8_t b3 = (bitBuf >> 8) & 0xFF;
+            uint8_t chk = bitBuf & 0xFF;
+            if (chk == (uint8_t)~(b0 ^ b1 ^ b2 ^ b3)) {
+              out.playerId = (b0 << 8) | b1;
+              out.weaponId = (b2 >> 4) & 0x0F;
+              out.team = (b2 >> 2) & 0x03;
+              out.shotSeq = b3;
+              out.channel = outChannel;
+              return true;
+            }
+          } else {
+            st = LaserCodec::S_DATA;
+          }
+        } else {
+          st = LaserCodec::S_IDLE;
+        }
+        break;
+    }
+  }
+  return false;
+}
+
+bool LaserCodec::poll(LaserFrame &out) {
+  // 两通道独立解码完整帧，任一成功即命中（距离互补）；channel 标记 0=940 1=850
+  if (decodeChan40(_st[0], _lastEdgeUs[0], _bitBuf[0], _bitCnt[0],
+                   _edgeTime[0], _edgeLevel[0], _head[0], _tail[0], out, 0)) {
+    rxCount++;
+    return true;
+  }
+  if (decodeChan40(_st[1], _lastEdgeUs[1], _bitBuf[1], _bitCnt[1],
+                   _edgeTime[1], _edgeLevel[1], _head[1], _tail[1], out, 1)) {
+    rxCount++;
+    return true;
+  }
+  return false;
+}
