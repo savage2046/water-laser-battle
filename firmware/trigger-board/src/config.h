@@ -10,19 +10,19 @@
 #define GUN_MAC { 0x24, 0x0A, 0xC4, 0x00, 0x00, 0x01 }  // 枪端主控 MAC
 
 // ===== 引脚 =====
-#define PIN_SDA 21           // INA226 I2C SDA
-#define PIN_SCL 22           // INA226 I2C SCL
+#define PIN_SDA 17           // INA226 I2C SDA（原理图接 ESP32-S3 G17）
+#define PIN_SCL 18           // INA226 I2C SCL（原理图接 ESP32-S3 G18）
 #define INA226_ADDR 0x40
 #define PIN_ACS712 34        // ACS712 模拟输出（纯输入引脚；INA226 方案下未用）
-#define PIN_MOSFET 15        // 断电开关 MOSFET 栅极（HIGH=枪回路导通）
-#define PIN_LED 2            // 状态 LED
-// #define PIN_ALERT 4       // INA226 报警中断（预留：扳机零轮询触发）
+#define PIN_MOSFET 10        // 断电开关控制（G10 → R5 → UCC27517 栅极驱动 → Q1=20N03；HIGH=枪回路导通）
+#define PIN_LED 2            // 状态 LED（G02 → R3 → LED1；高电平点亮）
+// #define PIN_ALERT 4       // INA226 报警中断（预留：扳机零轮询触发；注意开发板未引出 G4）
 
 // ===== 电流检测 =====
 // 传感器二选一：INA226（推荐，I2C 数字）或 ACS712（模拟，快速原型）
 #define CURRENT_SENSE_INA226 1
 // #define CURRENT_SENSE_ACS712 1
-#define SHUNT_MOHM 2         // INA226 分流电阻 2mΩ
+#define SHUNT_MOHM 2         // INA226 分流电阻 2mΩ（原理图 R1 = HoLLR2512-3W-2mR-1%，C2994640）
 #define TRIG_CURRENT_A 1.0f  // 扳机判定阈值（开机自校准后覆盖）
 #define DEBOUNCE_MS 10       // 扳机去抖
 #define PULSE_MIN_GAP_MS 20  // 相邻脉冲最小间隔（防抖）

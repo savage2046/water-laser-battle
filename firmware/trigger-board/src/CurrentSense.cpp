@@ -4,7 +4,8 @@
 
 // ===== INA226（I2C，分流 2mΩ）=====
 // 寄存器：Config=0x00, Shunt=0x01, Bus=0x02
-// Config 0x00DF：连续 shunt+bus 测量，AVG=1x，VSHCT/VBUSCT=588µs
+// Config 0x06C7：连续 shunt+bus，AVG=1x，VSHCT/VBUSCT=588µs → 1.18ms/周期
+//   （注意：0x00DF 的 bit5-3=011 是 AVG=64 → 46.6ms/周期，曾导致检测时延超标）
 static void inaWrite(uint8_t reg, uint16_t v) {
   Wire.beginTransmission(INA226_ADDR);
   Wire.write(reg);
@@ -24,12 +25,13 @@ static uint16_t inaRead(uint8_t reg) {
 void CurrentSense::begin() {
 #if CURRENT_SENSE_INA226
   Wire.begin(PIN_SDA, PIN_SCL);
+  Wire.setClock(400000);  // INA226 支持 2.5MHz；400kHz 下读一次 ≈75µs
   // 校验芯片在位（读 Manufacturer ID 0xFE = 0x5449 "TI"）
   uint16_t mid = inaRead(0xFE);
   if (mid != 0x5449) {
     Serial.printf("[cs] INA226 not found (mid=0x%04X)\n", mid);
   }
-  inaWrite(0x00, 0x00DF);  // 连续 shunt+bus，588µs×2 ≈ 1.2ms/周期
+  inaWrite(0x00, 0x06C7);  // 连续 shunt+bus，AVG=1，588µs×2 ≈ 1.2ms/周期
 #else
   pinMode(PIN_ACS712, INPUT);
   analogReadResolution(12);
