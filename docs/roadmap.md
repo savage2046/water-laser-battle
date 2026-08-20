@@ -76,7 +76,7 @@ ESP-NOW 单跳 2-5ms（端到端 5-15ms）满足音效同步；物理断电是�
 **待办（后续接续顺序）**
 1. 编译验证三端（gun / gateway / trigger-board）——会话终端故障未跑 `pio run`
 2. 多枪型电流波形采集 → 阈值校准（识别准确率 ≥99%）
-3. 硬件打样：INA226 + 2mΩ 分流 + 逻辑电平 MOSFET（RDS<2mΩ）+ ESP32-C3
+3. 硬件打样：INA226 + 2mΩ 分流（R1=HoLLR2512-3W-2mR-1%，C2994640）+ UCC27517 栅极驱动 + 20N03 MOSFET + ESP32-S3
 4. 端到端实测：ESP-NOW 延时 P95、断电响应 <50ms、同场多枪互扰、断电重上电副作用
 
 **文档**：[docs/trigger-sensor-study.md](docs/trigger-sensor-study.md)（研究）｜
