@@ -37,6 +37,7 @@ water-laser-battle/
 │   ├── gun/               # 水弹枪端固件（ESP32 + SX1262 470M + 双波段红外 + OLED）
 │   ├── helmet/            # 头盔接收器固件（4路双波段红外 + 470M T帧/GPS上报）
 │   ├── target/            # 激光校准靶（9路阵列 + 双波段解码 + OLED）
+│   ├── espnow-verify/     # 电流检测板 ESP-NOW 信号验证固件（接收/统计/下行测试）
 │   └── gateway/           # 基地台网关固件（470M⇄WebSocket 桥接 + 开机自检/多射频）
 ├── server/                # Node.js 对战服务器 + Web 控制台
 └── tools/simulate.js      # 无硬件模拟器（模拟多网关 + 虚拟设备）
