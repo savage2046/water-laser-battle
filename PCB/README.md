@@ -3,6 +3,14 @@
 > ⚠️ **实验/测试主板**：用于**电流变化前期研究**（扳机/连发电流波形采集、阈值校准、
 > INA226 性能验证）。**后期实际 PCB 将重新设计**，本板不作为量产硬件依据。
 
+## 0. 枪端电源板（新板设计，`gun-power-board/`）
+
+枪端独立电源板：**18350 电池 + USB-C 充电 + IP5306 集成电源管理
+（充电/5V 升压/按键开关机/4LED 电量/保护），输出 5V 单轨**（3.3V 由
+ESP32 DevKit 板载 LDO 提供）。设计文档见 [`gun-power-board/README.md`](gun-power-board/README.md)，
+配套 BOM（`bom.csv`）、原理图（`schematic.svg`）与 EDA 绘图清单
+（`gun-power-board/eda-绘图清单.md`）；嘉立创工程 `PCB/gun-board.eprj2` 已建（板 18350-power）。
+
 ## 文件清单
 
 | 文件 | 说明 |

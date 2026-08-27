@@ -2,7 +2,8 @@
 #include <Arduino.h>
 #include <RadioLib.h>
 
-// 470MHz LoRa 链路：SX1262 SPI 直驱（RadioLib）。
+// 470MHz LoRa 链路：E22-400M22S（SX1268 芯片）SPI 直驱（RadioLib SX1262 类，
+// 寄存器兼容；470MHz 在 SX1262 类频率范围内）。
 // 一帧一个 LoRa 包（≤64 字节），LoRa 自带长度，无需分隔符。
 class RadioLink {
  public:
