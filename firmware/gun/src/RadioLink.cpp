@@ -5,7 +5,7 @@
 RadioLink radio;
 
 void RadioLink::begin() {
-  // SX1262 挂 ESP32 硬件 SPI（VSPI 默认 18/19/23）
+  // E22-400M22S（SX1268）挂 ESP32-S3 硬件 SPI
   SPI.begin(SX_SCLK, SX_MISO, SX_MOSI, SX_NSS);
   _radio = new SX1262(new Module(SX_NSS, SX_DIO1, SX_RST, SX_BUSY));
   _radio->setSPI(&SPI);

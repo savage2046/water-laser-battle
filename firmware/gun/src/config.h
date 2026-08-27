@@ -7,27 +7,30 @@
 #define FW_VERSION "1.0.0"
 
 // ===== 引脚定义（详见 docs/hardware-design.md）=====
-#define PIN_IR_TX 25             // 940nm 红外发射 LED（38kHz 载波）
-#define PIN_IR_TX_850 12         // 850nm 红外发射 LED（56kHz 载波；GPIO12 需下拉 10kΩ）
-#define PIN_IR_RX 26             // 940nm 接收 TSOP38238（38kHz，空闲高电平，中断引脚）
-#define PIN_IR_RX_850 36         // 850nm 接收 TSOP4856（56kHz，空闲高电平，纯输入）
-#define PIN_TRIGGER 27           // 扳机微动开关（上拉，按下接地）
-#define PIN_MOTOR 32             // 水弹波箱电机 MOSFET 栅极
-#define PIN_LED_DATA 15          // WS2812 数据脚（状态灯）
+// ⚠️ main 板主控为 LCKFB-ESP32S3R8N8（ESP32-S3）开发板，引脚按 S3 重映射，
+//    见 PCB/main-board-S3引脚映射.md。S3 约束：GPIO26-32=Flash、33-37=Octal PSRAM、
+//    19/20=USB、0/3/45/46=strapping，均不可用作普通 IO。
+#define PIN_IR_TX 1              // 940nm 红外发射 LED（38kHz 载波）
+#define PIN_IR_TX_850 2          // 850nm 红外发射 LED（56kHz 载波；S3 无 strapping 下拉需求）
+#define PIN_IR_RX 4              // 940nm 接收 TSOP38238（38kHz，空闲高电平，中断引脚）
+#define PIN_IR_RX_850 5          // 850nm 接收 TSOP4856（56kHz，空闲高电平）
+#define PIN_TRIGGER 6            // 扳机微动开关（上拉，按下接地）
+#define PIN_MOTOR 7              // 水弹波箱电机 MOSFET 栅极
+#define PIN_LED_DATA 8           // WS2812 数据脚（状态灯）
 
 // ===== 音频（MAX98357A I2S 功放 + 8Ω 小喇叭；替代蜂鸣器）=====
-#define PIN_I2S_BCLK 14          // 原夺旗键 CAPTURE 释放（ctf 按键让位）
-#define PIN_I2S_WS 4             // 原 SX_DIO1 释放（RadioLib 轮询模式不需 DIO1）
-#define PIN_I2S_DOUT 33          // 原蜂鸣器脚复用
+#define PIN_I2S_BCLK 9           // MAX98357A BCLK（S3 GPIO matrix 任意映射）
+#define PIN_I2S_WS 18            // MAX98357A LRCK
+#define PIN_I2S_DOUT 11          // MAX98357A DIN
 
-// ===== SX1262 470MHz LoRa（SPI 直驱）=====
-#define PIN_SX_NSS 5             // SPI 片选
-#define PIN_SX_SCLK 18           // SPI 时钟
-#define PIN_SX_MOSI 23           // SPI 主机输出
-#define PIN_SX_MISO 19           // SPI 主机输入
-#define PIN_SX_RST 16            // 复位
-#define PIN_SX_BUSY 17           // 忙指示
-#define PIN_SX_DIO1 4            // 中断（RadioLib 轮询模式可不接）
+// ===== SX1268 470MHz LoRa（E22-400M22S 模组，SPI 直驱）=====
+#define PIN_SX_NSS 15            // SPI 片选
+#define PIN_SX_SCLK 12           // SPI 时钟
+#define PIN_SX_MOSI 14           // SPI 主机输出
+#define PIN_SX_MISO 13           // SPI 主机输入
+#define PIN_SX_RST 16            // 复位（E22-400M22S NRST，低有效）
+#define PIN_SX_BUSY 17           // 忙指示（E22-400M22S GPIO4）
+#define PIN_SX_DIO1 (-1)         // DIO1 不接（RadioLib 轮询模式；Module 传 -1）
 
 #define RADIO_FREQ_MHZ 470.0f    // 470~510MHz 国内合法微功率频段
 #define RADIO_BW_KHZ 500.0f      // 目标：SF7/500k（21.9kbps，见 docs/wireless-research.md）
@@ -50,16 +53,16 @@
 #define TDMA_REG_US 10000        // 注册时隙
 #define TDMA_DEV_TIMEOUT_MS 30000 // 设备心跳超时（网关移除并重排时隙）
 
-// ===== 显示屏（SSD1306 OLED 128x64 I2C）=====
-#define PIN_OLED_SDA 21          // ESP32 I2C SDA
-#define PIN_OLED_SCL 22          // ESP32 I2C SCL
+// ===== 显示屏（SSD1306 OLED 128x64 I2C，软件 I2C 任意引脚）=====
+#define PIN_OLED_SDA 21          // I2C SDA
+#define PIN_OLED_SCL 38          // I2C SCL
 #define OLED_ADDR 0x3C
 
-// ===== 菜单按钮（上/下/确认/取消，按下接地）=====
-#define PIN_BTN_UP 34            // 上（纯输入引脚，需外部 10kΩ 上拉）
-#define PIN_BTN_DOWN 35          // 下（纯输入引脚，需外部 10kΩ 上拉）
-#define PIN_BTN_OK 0             // 确认（内部上拉；复用板载 BOOT 键）
-#define PIN_BTN_CANCEL 2         // 取消（内部上拉）
+// ===== 菜单按钮（上/下/确认/取消，按下接地；S3 全部用内部上拉）=====
+#define PIN_BTN_UP 39            // 上（内部上拉）
+#define PIN_BTN_DOWN 40          // 下（内部上拉）
+#define PIN_BTN_OK 42            // 确认（内部上拉；S3 的 GPIO0 保留给板载 BOOT）
+#define PIN_BTN_CANCEL 47        // 取消（内部上拉；GPIO43/44 留给 UART0 串口芯片，勿占用）
 #define MENU_TIMEOUT_MS 10000    // 菜单无操作超时，返回战斗界面
 
 // ===== 红外编解码参数（NEC 风格，见 docs）=====
@@ -74,7 +77,7 @@
 #define IR_GAP_THRESH_US 1125    // 0/1 判别阈值
 
 // ===== 作用范围：功率档位与双帧 =====
-#define PIN_IR_POWER 13          // 功率档位切换（高=远档大电流），近档拉低
+#define PIN_IR_POWER 41          // 功率档位切换（高=远档大电流），近档拉低
 #define IR_DUAL_FRAME 1          // 每扣扳机发 2 帧相同 shotSeq（提升远距离成功率）
 #define IR_DUAL_FRAME_GAP_MS 20  // 双帧间隔（双波段并行后单帧 ~55ms，20ms 间隔保证帧界清晰）
 #define DEFAULT_POWER_LEVEL 1    // 0近 1标准 2远（服务器 W 帧可覆盖）
@@ -83,7 +86,7 @@
 #define MOTOR_ON_MS 60           // 水弹波箱联动时长
 
 // ===== 户外强光自适应 =====
-#define PIN_LIGHT_SENSE 39       // 环境光检测（光敏二极管+分压 → ADC1_CH3）；0xFF=禁用
+#define PIN_LIGHT_SENSE 10       // 环境光检测（光敏二极管+分压 → ADC1_CH10，S3 ADC1=GPIO1-10）；0xFF=禁用
 #define LIGHT_SAMPLE_MS 500      // 采样周期
 #define LIGHT_AUTO_POWER 1       // 强光自动升远档（1=开 0=关）
 #define LIGHT_HIGH_ADC 2800      // ADC 12bit 阈值：高于=强光（阳光直射）
