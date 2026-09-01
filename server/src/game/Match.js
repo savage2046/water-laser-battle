@@ -292,7 +292,7 @@ export class Match {
               .map((p) => p.playerId)
           : [],
       scoreToWin: this.scoreToWin,
-      powerLevel: this.mode.powerLevel ?? 1,  // 激光作用范围档位
+      powerLevel: this.mode.powerLevel ?? 1,  // 激光作用范围档位 0..3（两通道独立映射）
     };
     this.ctx.sendCmd(player.deviceId, {
       t: 'welcome',

@@ -4,7 +4,8 @@
 LaserCodec laser;
 
 // ---- 两路接收 ISR ----
-static void IRAM_ATTR irEdgeISR940() {
+// （friend 声明于 LaserCodec.h，勿加 static——否则与 friend 的 extern 声明冲突）
+void IRAM_ATTR irEdgeISR940() {
   uint32_t now = micros();
   uint8_t lvl = digitalRead(PIN_IR_RX);
   uint8_t h = laser._head[0];
@@ -16,7 +17,7 @@ static void IRAM_ATTR irEdgeISR940() {
   }
 }
 
-static void IRAM_ATTR irEdgeISR850() {
+void IRAM_ATTR irEdgeISR850() {
   uint32_t now = micros();
   uint8_t lvl = digitalRead(PIN_IR_RX_850);
   uint8_t h = laser._head[1];
@@ -29,12 +30,15 @@ static void IRAM_ATTR irEdgeISR850() {
 }
 
 void LaserCodec::begin(uint8_t tx940, uint8_t tx850, uint8_t rx940,
-                       uint8_t rx850, uint8_t powerPin) {
+                       uint8_t rx850, uint8_t powerPin, uint8_t pwr850A,
+                       uint8_t pwr850B) {
   _tx940 = tx940;
   _tx850 = tx850;
   _rx940 = rx940;
   _rx850 = rx850;
   _powerPin = powerPin;
+  _pwr850A = pwr850A;
+  _pwr850B = pwr850B;
   pinMode(_tx940, OUTPUT);
   digitalWrite(_tx940, LOW);
   pinMode(_tx850, OUTPUT);
@@ -45,16 +49,36 @@ void LaserCodec::begin(uint8_t tx940, uint8_t tx850, uint8_t rx940,
     pinMode(_powerPin, OUTPUT);
     digitalWrite(_powerPin, LOW);
   }
+  if (_pwr850A != 0xFF) {
+    pinMode(_pwr850A, OUTPUT);
+    digitalWrite(_pwr850A, LOW);
+  }
+  if (_pwr850B != 0xFF) {
+    pinMode(_pwr850B, OUTPUT);
+    digitalWrite(_pwr850B, LOW);
+  }
   attachInterrupt(digitalPinToInterrupt(_rx940), irEdgeISR940, CHANGE);
   attachInterrupt(digitalPinToInterrupt(_rx850), irEdgeISR850, CHANGE);
   setPowerLevel(DEFAULT_POWER_LEVEL);
 }
 
-// 功率档位：远档拉高 PIN_IR_POWER 切换大电流限流
+// 功率档位（全局 0..3，两通道独立映射）：
+//   940nm: 档位≥2 → PIN_IR_POWER 拉高远档大电流（近档 0/1）
+//   850nm: bit0=IR_PWR_850_A、bit1=IR_PWR_850_B，00/01/10/11 →
+//          0.5/1.0/1.5/2.0 × I_nom（I_nom=原 R3 校准电流；默认档 1 保持 20m 边界）
+//          仅 A 可用时退化为 2 档（档位≥1 → 1.0·I_nom）
 void LaserCodec::setPowerLevel(uint8_t level) {
   _powerLevel = level;
   if (_powerPin != 0xFF) {
     digitalWrite(_powerPin, level >= 2 ? HIGH : LOW);
+  }
+  if (_pwr850A != 0xFF) {
+    if (_pwr850B != 0xFF) {
+      digitalWrite(_pwr850A, (level & 0x01) ? HIGH : LOW);
+      digitalWrite(_pwr850B, (level & 0x02) ? HIGH : LOW);
+    } else {
+      digitalWrite(_pwr850A, level >= 1 ? HIGH : LOW);
+    }
   }
 }
 
@@ -115,8 +139,11 @@ void LaserCodec::sendFrame(const LaserFrame &f) {
   uint8_t chk = ~(uint8_t)(b0 ^ b1 ^ b2 ^ b3);
   uint8_t bytes[5] = { b0, b1, b2, b3, chk };
 
-  ChanTx chA = { _tx940, 13, false, false, false, 0, 0, bytes, 0, 7 };
-  ChanTx chB = { _tx850, 9, false, false, false, 0, 0, bytes, 0, 7 };
+  // C++11 下含默认成员初始化器的结构体不是聚合体，不能用花括号初始化——
+  // 改为默认构造后逐字段赋值（语义与原 10 字段列表一致）
+  ChanTx chA, chB;
+  chA.pin = _tx940;  chA.halfUs = 13; chA.bytes = bytes; chA.bitPos = 7;
+  chB.pin = _tx850;  chB.halfUs = 9;  chB.bytes = bytes; chB.bitPos = 7;
   uint32_t now0 = micros();
   chA.carrier = true;  chA.flipAt = now0;  chA.phaseUntil = now0 + IR_BIT_HIGH_US;
   chB.carrier = true;  chB.flipAt = now0;  chB.phaseUntil = now0 + IR_BIT_HIGH_US;
@@ -180,7 +207,7 @@ void LaserCodec::sendFrame(const LaserFrame &f) {
 }
 
 // 单通道解码完整 40bit 帧，返回 true 且 out 有效表示校验通过；outChannel 填通道号
-static bool decodeChan40(LaserCodec::State &st, uint32_t &lastEdgeUs,
+bool LaserCodec::decodeChan40(LaserCodec::State &st, uint32_t &lastEdgeUs,
                          uint64_t &bitBuf, uint8_t &bitCnt,
                          const volatile uint32_t *edgeTime,
                          const volatile uint8_t *edgeLevel,

@@ -46,6 +46,8 @@
 | BTN_UP（菜单上） | **GPIO39** | 输入 | S3 有内部上拉（原 GPIO34 需外部上拉问题消失） |
 | BTN_DOWN（菜单下） | **GPIO40** | 输入 | 同上 |
 | PIN_IR_POWER（功率档） | **GPIO41** | 输出 | 940nm 远档大电流切换（高=远档） |
+| IR_PWR_850_A（850nm 功率档 bit0） | **GPIO44** | 输出 | 850nm 选档 MOSFET Q_a 栅极（低=该电流支路断开） |
+| IR_PWR_850_B（850nm 功率档 bit1） | **GPIO43** | 输出 | 850nm 选档 MOSFET Q_b 栅极（**可选**：若 43 被 UART0 占用则悬空，固件自动退化为 2 档） |
 | BTN_OK（确认） | **GPIO42** | 输入 | 内部上拉（S3 GPIO0 保留给板载 BOOT，不用作按键） |
 | BTN_CANCEL（取消） | **GPIO47** | 输入 | 内部上拉（GPIO43/44 留给 UART0 串口芯片，勿占用） |
 | SX_DIO1 | — | **不接** | RadioLib 轮询模式（RadioLink.cpp 已轮询），留空 |
@@ -69,12 +71,19 @@
 | BTN_OK/CANCEL | 0/2 | 42/43 | 释放 GPIO0 给板载 BOOT |
 | LIGHT_SENSE | 39 | 10 | ADC1_CH10（S3 的 ADC1 仅 GPIO1-10） |
 | PIN_IR_POWER | 13 | 41 | |
+| IR_PWR_850_A（新增） | — | 44 | 850nm 功率档 bit0 |
+| IR_PWR_850_B（新增） | — | 43 | 850nm 功率档 bit1（可选，见 §4） |
 
 ## 4. 待核对项（用户/开发板侧）
 
-1. **LCKFB-ESP32S3R8N8 DIP-40 排针引出核对**：确认 GPIO1/2/4–18、21、38–42、47 全部引出
+1. **LCKFB-ESP32S3R8N8 DIP-40 排针引出核对**：确认 GPIO1/2/4–18、21、38–42、44、47 全部引出
    （排针丝印/原理图，立创开源广场：lckfb.com/project/detail/lckfb-esp32s3r8n8）。
-2. 若个别 GPIO 未引出，需在本表备用池（GPIO44/47）或相邻引脚中替换。
-3. 板载 5V/3V3/GND 排针位置（载板供电走排针）。
-4. 确认后：同步修改 `firmware/gun/src/config.h`（本表 GPIO 号）并更新
+2. **GPIO43/44 占用核对（关键）**：本表原注释"43/44 留给 UART0 串口芯片"，但 44 已分配
+   给 850nm 功率档 bit0、43 给 bit1（可选）。**需确认开发板 UART0 是否实际引出到 43/44**：
+   - 若未引出（USB 即串口）→ 两个引脚都可用，850nm 完整 4 档；
+   - 若 43 被占用 → IR_PWR_850_B 悬空，固件退化为 2 档（config.h 将 B 改 0xFF）。
+3. 若个别 GPIO 未引出，需在本表备用池（GPIO47 已用）或相邻引脚中替换，并同步
+   修改 firmware/gun/src/config.h。
+4. 板载 5V/3V3/GND 排针位置（载板供电走排针）。
+5. 确认后：同步修改 `firmware/gun/src/config.h`（本表 GPIO 号）并更新
    docs/hardware-design.md 接线表。

@@ -46,7 +46,7 @@ LoRa 带宽有限（470.0MHz、125kHz、SF8 时约 3.1kbps 有效载荷），因
 
 | 帧 | 格式 | 示例 | 说明 |
 | --- | --- | --- | --- |
-| 欢迎/规则 | `@<idx>:W<playerId>,<mode>,<hp>,<dmg>,<ammo>,<reloadMs>,<respawnMs>,<team>,<friends>,<scoreToWin>[,<powerLevel>]` | `@3:W3,tdm,100,10,120,2000,3000,0,3;5;9,50,1` | `friends` 用 `;` 分隔的友军 ID 列表；**无友军（ffa）时用 `-` 占位**；`team`=-1 表示无队伍；`powerLevel`=激光作用范围档位（0近 1标准 2远，可选） |
+| 欢迎/规则 | `@<idx>:W<playerId>,<mode>,<hp>,<dmg>,<ammo>,<reloadMs>,<respawnMs>,<team>,<friends>,<scoreToWin>[,<powerLevel>]` | `@3:W3,tdm,100,10,120,2000,3000,0,3;5;9,50,1` | `friends` 用 `;` 分隔的友军 ID 列表；**无友军（ffa）时用 `-` 占位**；`team`=-1 表示无队伍；`powerLevel`=激光作用范围档位（**0..3**：0近 1标准 2远 3极限；两通道独立映射，850nm 由 2 位 GPIO 选 4 档电流，见 hardware-design §6.5；可选，默认 1） |
 | 重生 | `@<idx>:R` | `@3:R` | 阵亡玩家复活（幂等） |
 | 对局开始 | `@<idx>:S<mode>` | `@3:Stdm` | 复位血量弹药、解锁扳机 |
 | 对局结束 | `@<idx>:E<winner>` | `@3:E0` | 锁扳机等待下一局；`winner`=-1 平局 |

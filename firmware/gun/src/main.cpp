@@ -14,6 +14,9 @@
 // 标准频点栅格（与网关自动分配一致，见 TdmaProto.h TDMA_STD_*）
 static float kChannels[TDMA_CHANNELS];
 
+// ESP-NOW 链路全局实例（枪端 ↔ 检测板；GunEspNow::_self 在 begin() 中指向它）
+GunEspNow gunEspNow;
+
 // 事件序号：16 位自增，多网关重复上报时服务器据此去重
 static uint16_t g_seq = 0;
 static uint16_t nextSeq() { return ++g_seq; }
@@ -306,6 +309,15 @@ static void motorUpdate() {
 // ===== 户外强光自适应：环境光采样 → 自动升远档 =====
 static uint8_t g_lightLevel = 0;   // 0低 1中 2高 3极强
 static unsigned long g_lastLight = 0;
+
+// 环境光等级名称（Display.cpp 引用；OLED 状态行 LIGHT:xx）
+const char *lightName() {
+  switch (g_lightLevel) {
+    case 2: return "EXTREME";
+    case 1: return "HIGH";
+    default: return "LOW";
+  }
+}
 static void lightUpdate() {
 #if PIN_LIGHT_SENSE != 0xFF
   if (millis() - g_lastLight < LIGHT_SAMPLE_MS) return;
@@ -327,7 +339,7 @@ void setup() {
   digitalWrite(PIN_MOTOR, LOW);
 
   laser.begin(PIN_IR_TX, PIN_IR_TX_850, PIN_IR_RX, PIN_IR_RX_850,
-              PIN_IR_POWER);
+              PIN_IR_POWER, PIN_IR_PWR_850_A, PIN_IR_PWR_850_B);
   radio.begin();
   // 标准频点栅格：470.0 + k×2.0MHz（k=0..19）
   for (int k = 0; k < TDMA_CHANNELS; k++) {

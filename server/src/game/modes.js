@@ -8,7 +8,7 @@ export const MODES = {
     scoreToWin: 50,
     friendlyFire: false,
     capture: false,
-    powerLevel: 1,      // 0近 1标准 2远（激光作用范围，见 game-modes.md）
+    powerLevel: 1,      // 0..3：0近 1标准 2远 3极限（两通道独立映射，见 game-modes.md）
   },
   ffa: {
     id: 'ffa',

@@ -16,13 +16,20 @@ struct LaserFrame {
 class LaserCodec {
  public:
   // tx940/tx850：两个波段发射引脚；rx940/rx850：两个波段接收引脚（中断）
+  // powerPin：940nm 功率档（高=远档）；pwr850A/pwr850B：850nm 功率档 bit0/bit1
+  // （0xFF=未接；仅 pwr850A 时 850nm 退化为 2 档）
   void begin(uint8_t tx940, uint8_t tx850, uint8_t rx940, uint8_t rx850,
-             uint8_t powerPin = 0xFF);
+             uint8_t powerPin = 0xFF, uint8_t pwr850A = 0xFF,
+             uint8_t pwr850B = 0xFF);
 
   // 发射一帧（两通道并行 ~80ms），发射期间忽略接收
   void sendFrame(const LaserFrame &f);
 
-  // 作用范围功率档位：0近 1标准 2远（切换 PIN_IR_POWER 驱动电流）
+  // 作用范围功率档位 0..3（全局，两通道独立映射）：
+  //   940nm: 档位≥2 → PIN_IR_POWER 拉高远档大电流
+  //   850nm: 档位按位映射 → bit0=A、bit1=B（00/01/10/11 = 0.5/1.0/1.5/2.0 × I_nom，
+  //          默认档 1 = 原 R3 校准电流，保持 20m 边界）
+  //          仅 A 可用时：档位≥1 → A 导通（2 档）
   void setPowerLevel(uint8_t level);
 
   // 非阻塞轮询：任一通道解码成功返回 true
@@ -36,6 +43,7 @@ class LaserCodec {
 
  private:
   uint8_t _tx940, _tx850, _rx940, _rx850, _powerPin;
+  uint8_t _pwr850A = 0xFF, _pwr850B = 0xFF;
   uint8_t _powerLevel = 1;
   volatile bool _txBusy = false;
 
@@ -51,6 +59,13 @@ class LaserCodec {
   uint32_t _lastEdgeUs[2] = {0, 0};
   uint64_t _bitBuf[2] = {0, 0};
   uint8_t _bitCnt[2] = {0, 0};
+
+  // 单通道解码完整 40bit 帧（静态成员：需访问私有 State/EDGE_BUF；由 poll 调用）
+  static bool decodeChan40(State &st, uint32_t &lastEdgeUs, uint64_t &bitBuf,
+                           uint8_t &bitCnt, const volatile uint32_t *edgeTime,
+                           const volatile uint8_t *edgeLevel,
+                           volatile uint8_t &head, volatile uint8_t &tail,
+                           LaserFrame &out, uint8_t outChannel);
 
   friend void irEdgeISR940();
   friend void irEdgeISR850();
