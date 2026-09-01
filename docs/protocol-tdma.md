@@ -56,7 +56,7 @@ POS 分片 flags：片0=`FIRST|MORE`，片1=`MORE`，片2=无。网关按 devIdx
 WELCOME 3 片（flags：片0=`FIRST|MORE`，片1=`MORE`，片2=无）：
 - 片0：playerId(2B BE) \| hp \| dmg \| ammo
 - 片1：reloadMs(2B BE) \| respawnMs(2B BE) \| team(int8)
-- 片2：scoreToWin \| powerLevel \| friends devIdx 位图(24bit，T1 假定 playerId==devIdx)
+- 片2：scoreToWin \| powerLevel(0..3，两通道独立映射) \| friends devIdx 位图(24bit，T1 假定 playerId==devIdx)
 
 ## 3. 寻址与去重
 

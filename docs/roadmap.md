@@ -51,7 +51,7 @@
 - T2 后续：W 帧友军位图映射修正（playerId≠devIdx）、JOIN 携带设备名/master、深睡省电
 - 遗留坑：设备扫描全栅格 20 点 ≈ 5.25s（一次性；快速测试可临时 `TDMA_CHANNELS 1`）
 
-### 0.6 会话存档补充：无改装水弹枪联动（第二轮，代码已实现待实测）
+### 0.6 会话存档补充：无改装水弹枪联动（第二轮，代码已实现 + 正式板设计完成，待打样实测）
 
 > 目标：不改装水弹枪，电池处串联检测板——电流波形识别扳机/连发（逐发音效同步），
 > 击杀/空弹物理断电防作弊；检测板 ↔ 枪端主控用 ESP-NOW（2.4G）。
@@ -60,12 +60,13 @@
 ESP-NOW 单跳 2-5ms（端到端 5-15ms）满足音效同步；物理断电是唯一硬防作弊手段；
 470M TDMA 系统零改动复用。
 
-**实现清单（代码已写完，未编译/未实测）**
+**实现清单（代码已写完，未编译/未实测；正式板原理图/PCB 已设计）**
 | 文件 | 内容 |
 | --- | --- |
-| `firmware/trigger-board/`（新工程） | 检测板：INA226/ACS712 采样 + 识别状态机（扳机/连发/堵转）+ MOSFET 断电 + ESP-NOW（fire/hb/fault/power 4 字节帧） |
+| `PCB/triger-sensor.eprj2`（正式板工程） | ESP32-C3-WROOM-02-N4 + USB-C + XL1509-5.0 + AMS1117-3.3 + INA226(2mΩ) + UCC27517 + 20N03；PCB 已摆件/布线中（解析报告 `PCB/triger-sensor-解析报告.md`） |
+| `firmware/trigger-board/`（新工程） | 检测板：INA226 采样 + 识别状态机（扳机/连发/堵转）+ MOSFET 断电 + ESP-NOW（fire/hb/fault/power 4 字节帧）；引脚 IO4/IO5/IO3/IO0 |
 | `firmware/gun/src/GunEspNow.h/.cpp`（新） | 枪端 ESP-NOW：开火事件源 + 断电/恢复指令 + 心跳监控 |
-| `firmware/gun/src/main.cpp` | 扳机双源（微动 || ESP-NOW）；`gunPowerUpdate()` 断电（条件：存活&&有弹&&未锁） |
+| `firmware/gun/src/main.cpp` | 扳机双源（微动 \|\| ESP-NOW）；`gunPowerUpdate()` 断电（条件：存活&&有弹&&未锁） |
 | `firmware/gun/src/config.h` | `GUN_ESPNOW_ENABLE`/`TRIGGER_BOARD_MAC`/`ESPNOW_CHANNEL` |
 
 **关键参数（config.h，实测校准）**
@@ -75,8 +76,9 @@ ESP-NOW 单跳 2-5ms（端到端 5-15ms）满足音效同步；物理断电是�
 
 **待办（后续接续顺序）**
 1. 编译验证三端（gun / gateway / trigger-board）——会话终端故障未跑 `pio run`
-2. 多枪型电流波形采集 → 阈值校准（识别准确率 ≥99%）
-3. 硬件打样：INA226 + 2mΩ 分流（R1=HoLLR2512-3W-2mR-1%，C2994640）+ UCC27517 栅极驱动 + 20N03 MOSFET + ESP32-S3
+2. **正式板打样/焊接**：验证电源链（XL1509 5V + AMS1117 3.3V）、USB-C 原生 USB 烧录、
+   INA226（IO4/IO5，2mΩ）、UCC27517→20N03 断电回路
+3. 多枪型电流波形采集 → 阈值校准（识别准确率 ≥99%）
 4. 端到端实测：ESP-NOW 延时 P95、断电响应 <50ms、同场多枪互扰、断电重上电副作用
 
 **文档**：[docs/trigger-sensor-study.md](docs/trigger-sensor-study.md)（研究）｜
@@ -91,7 +93,7 @@ ESP-NOW 单跳 2-5ms（端到端 5-15ms）满足音效同步；物理断电是�
 | **开机自动分配信道/时隙 + 注册负载均衡（扫全栅格选 N 最小）** | ✅ 代码就绪 |
 | **网关开机自检（槽位探测 + 信道质量检测 + 频率自动分配 + 没装满兼容）** | ✅ 代码就绪 |
 | **10 字节定长二进制帧（19 类型 + CRC8 + 分片/重组）** | ✅ 代码就绪 |
-| **无改装联动检测板（电流传感 + MOSFET 断电 + ESP-NOW；枪端 GunEspNow 集成）** | ✅ 代码就绪（待硬件实测） |
+| **无改装联动检测板（电流传感 + MOSFET 断电 + ESP-NOW；枪端 GunEspNow 集成）** | ✅ 代码就绪 + 正式板原理图/PCB 完成（待打样实测） |
 | 多网关漫游（共听上报 + (deviceId,seq) 去重 + 下行广播 + @idx 寻址） | ✅ |
 | 网关间 UDP 组播（命中即时感知 <5ms + 仲裁同步） | ✅ |
 | 命中/血量/弹药/重生（服务器权威计分） | ✅ |
@@ -115,7 +117,9 @@ ESP-NOW 单跳 2-5ms（端到端 5-15ms）满足音效同步；物理断电是�
 
 ### 激光链路
 - **双波段同帧冗余**：完整 40bit 帧（playerId+weapon+team+shotSeq+chk）双通道并行，任一通道解码成功即命中
-- **850nm 限距 ≤20m**：固定低功率（独立限流 R3，不随 powerLevel 变档），20m 外刻意不触发；20m+ 由 940nm 透镜通道承担
+- **850nm 软件可调功率（4 档）**：默认档位限距 ≤20m（20m 外刻意不触发），
+  升档（powerLevel 2/3）用于日光直射补偿与战术设定；20m+ 由 940nm 透镜通道承担。
+  选档由 IR_PWR_850_A/B（GPIO44/43）2 位选档限流电阻组实现，见 hardware-design §6.5
 - **双帧发射**（同 shotSeq 2 帧）+ 准直透镜（940nm）提升远距可靠性
 
 ### 防作弊与击杀仲裁（最终定型）
@@ -130,8 +134,9 @@ ESP-NOW 单跳 2-5ms（端到端 5-15ms）满足音效同步；物理断电是�
 1. **ctf 夺旗按键已移除**（GPIO14 让位 I2S）——ctf 模式如要夺旗，需把夺旗键改接其他空闲引脚
 2. **GPIO12 是 strapping 引脚**（枪端 850nm 发射、头盔 IMU 电源都用它）——电路必须加 10kΩ 下拉
 3. **MPU9250 磁力计未校准**——yaw 为相对值；绕 8 字采集极值做硬铁/软铁补偿（待办）
-4. **850nm 射程上限 ~20m（设计意图）**——固定低功率（独立限流 R3，不随
-   powerLevel 变档）；20m+ 由 940nm 透镜通道承担。校准靶验证 20m 外不触发
+4. **850nm 射程上限 ~20m（默认档位设计意图）**——低档（powerLevel 0/1）电流
+   校准在 20m 边界内；升档（2/3）按对局配置放宽（日光补偿/战术）。校准靶验证
+   20m 外档 0/1 不触发
 5. 头盔 GPS 省电依赖 `V_BCKP 常接 3V3`（保 RTC 星历）——否则冷启动 1~3min
 6. **光强度为双帧窗口代理**（非真实 ADC 光强）——如需精确光强，加光电二极管+ADC
 7. `firmware/gun/src/Gps.h/.cpp`、`firmware/helmet/src/Display.h/.cpp`、`firmware/gateway/src/_draft.cpp` 是占位残留，可删
@@ -144,8 +149,8 @@ ESP-NOW 单跳 2-5ms（端到端 5-15ms）满足音效同步；物理断电是�
 
 ### 近期（硬件调通）
 - [ ] 打板/接线，逐端烧录验证（枪→盔→网关→服务器→控制台）
-- [ ] 校准靶实测：10m（850nm 应触发）/ 20m（850nm 应**不**触发）/ 20m+（940nm 触发）
-- [ ] 850nm 固定限流电阻 R3 校准（以"20m 外不触发"为目标，见 hardware-design §6.5）
+- [ ] 校准靶实测：10m（850nm 应触发）/ 20m（850nm 档 0/1 应**不**触发）/ 20m+（940nm 触发）
+- [ ] 850nm 各档位限流电阻校准（档 0/1 以"20m 外不触发"为目标；档 2/3 记录放宽后边界，见 hardware-design §6.5）
 - [ ] 磁力计 8 字校准（硬铁/软铁补偿），yaw 转绝对航向
 
 ### 中期（功能完善）
@@ -182,10 +187,11 @@ ESP-NOW 单跳 2-5ms（端到端 5-15ms）满足音效同步；物理断电是�
 - [ ] ctf 夺旗键改接（恢复夺旗模式）
 
 ### 远期（系统增强）
-- [ ] **无改装水弹枪联动（研究完成 + 固件原型已实现，待硬件实测，见 docs/trigger-sensor-study.md + trigger-board.md）**——
-      `firmware/trigger-board/`（INA226/ACS712 电流传感 + MOSFET 断电 + ESP32 + ESP-NOW）
+- [ ] **无改装水弹枪联动（研究完成 + 固件原型 + 正式板原理图/PCB 完成，待打样实测，见 docs/trigger-sensor-study.md + trigger-board.md + PCB/triger-sensor-解析报告.md）**——
+      `PCB/triger-sensor.eprj2`（ESP32-C3-WROOM-02-N4 + USB-C + XL1509/AMS1117 + INA226(2mΩ) + UCC27517→20N03）
+      + `firmware/trigger-board/`（电流传感 + MOSFET 断电 + ESP-NOW）
       + 枪端 `GunEspNow` 集成（开火事件源 + 阵亡/空弹断电 + 重生/装弹恢复）；
-      待办：电流波形采集校准阈值 → 硬件打样 → 端到端实测（延时/断电响应/多枪互扰）
+      待办：正式板打样/焊接 → 电流波形采集校准阈值 → 端到端实测（延时/断电响应/多枪互扰）
 - [ ] 枪端 OLED 改图标化界面 / 换彩屏
 - [ ] 服务器 Web 端：战绩图表、玩家管理、多场地并发
 - [ ] 回放轨迹热力图 / 击杀地图（含朝向）

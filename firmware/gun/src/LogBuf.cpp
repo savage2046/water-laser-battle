@@ -81,10 +81,7 @@ bool LogBuf::nextPayload(char *out, size_t maxLen, uint16_t &part,
   return started;
 }
 
-void LogBuf::clear() {
-  _count = 0;
-  _head = _tail = 0;
-}
+// clear() 在 LogBuf.h 中已内联定义（_count=0; _head=_tail=0），此处不再重复定义
 
 float LogBuf::usage() {
   return (float)_count / CAPACITY;

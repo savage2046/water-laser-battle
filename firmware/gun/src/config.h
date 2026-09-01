@@ -62,7 +62,7 @@
 #define PIN_BTN_UP 39            // 上（内部上拉）
 #define PIN_BTN_DOWN 40          // 下（内部上拉）
 #define PIN_BTN_OK 42            // 确认（内部上拉；S3 的 GPIO0 保留给板载 BOOT）
-#define PIN_BTN_CANCEL 47        // 取消（内部上拉；GPIO43/44 留给 UART0 串口芯片，勿占用）
+#define PIN_BTN_CANCEL 47        // 取消（内部上拉；GPIO44/43 已用于 850nm 功率档位，勿占用）
 #define MENU_TIMEOUT_MS 10000    // 菜单无操作超时，返回战斗界面
 
 // ===== 红外编解码参数（NEC 风格，见 docs）=====
@@ -77,10 +77,14 @@
 #define IR_GAP_THRESH_US 1125    // 0/1 判别阈值
 
 // ===== 作用范围：功率档位与双帧 =====
-#define PIN_IR_POWER 41          // 功率档位切换（高=远档大电流），近档拉低
+#define PIN_IR_POWER 41          // 940nm 功率档位切换（高=远档大电流），近档拉低
+#define PIN_IR_PWR_850_A 44      // 850nm 功率档 bit0（选档 MOSFET Q_a 栅极，低=该电流支路断开；必接）
+#define PIN_IR_PWR_850_B 43      // 850nm 功率档 bit1（选档 MOSFET Q_b 栅极；可选——若 GPIO43 被
+                                 // UART0 占用则改为 0xFF，固件自动退化为 2 档）
+#define IR_PWR_850_LEVELS 4      // 850nm 档位数（2 或 4，文档/校准用；固件按引脚有效性自动判定）
 #define IR_DUAL_FRAME 1          // 每扣扳机发 2 帧相同 shotSeq（提升远距离成功率）
 #define IR_DUAL_FRAME_GAP_MS 20  // 双帧间隔（双波段并行后单帧 ~55ms，20ms 间隔保证帧界清晰）
-#define DEFAULT_POWER_LEVEL 1    // 0近 1标准 2远（服务器 W 帧可覆盖）
+#define DEFAULT_POWER_LEVEL 1    // 0..3（服务器 W 帧可覆盖；两通道独立映射，见 hardware-design §6.5）
 
 // ===== 电机联动（非阻塞定时器，与红外发射并行，控制开火总延时 <200ms）=====
 #define MOTOR_ON_MS 60           // 水弹波箱联动时长

@@ -91,7 +91,7 @@ pio run -t upload
 | **TDMA 时隙 MAC（自适应 N=设备数，超帧 30+10N ms；开机自动分配信道/时隙）** | firmware/lib/tdma: `TdmaMac` |
 | **10 字节定长二进制帧（CRC8，分片/重组）** | firmware/lib/tdma: `TdmaProto` |
 | 无线升级方案：SX126x 多信道 TDMA（12 信道×17 时隙=200 设备 / 时延≤200ms / 1km） | docs/wireless-research.md |
-| 无改装水弹枪联动（电流检测扳机 + 击杀/空弹物理断电 + ESP-NOW 音效同步，研究） | docs/trigger-sensor-study.md |
+| 无改装水弹枪联动（电流检测扳机 + 击杀/空弹物理断电 + ESP-NOW 音效同步，研究+正式板设计完成） | docs/trigger-sensor-study.md + PCB/triger-sensor.eprj2 |
 | 枪端显示屏（血量/弹药/状态/倒计时） | firmware/gun: `Display` |
 | 头盔 GPS（NMEA 解析、位置归主人设备） | firmware/helmet: `Gps` |
 | 音效播放（MAX98357A I2S，射击/命中/阵亡等） | firmware: `AudioPlayer` |
@@ -130,6 +130,7 @@ pio run -t upload
 - [ESP32 网关处理能力估算（CPU/RAM/SPI/GPIO）](docs/gateway-capacity.md)
 - [无改装水弹枪联动方案研究（电流检测扳机 + 断电执行 + ESP-NOW）](docs/trigger-sensor-study.md)
 - [检测板实现说明（trigger-board 固件 + 枪端集成）](docs/trigger-board.md)
+- [检测板正式板 PCB（triger-sensor.eprj2，解析报告）](PCB/triger-sensor-解析报告.md)
 - [硬件设计与接线](docs/hardware-design.md)
 - [通信协议规范](docs/protocol.md)
 - [470MHz LoRa 链路协议](docs/protocol-915m.md)

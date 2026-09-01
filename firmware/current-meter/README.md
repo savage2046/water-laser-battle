@@ -1,5 +1,8 @@
 # current-meter：电流 1Hz 简易测试固件（ESP32-S3 + INA226）
 
+> 板卡：`triger-sensor-current-test` 实验板（旧实验板；已被正式板 `PCB/triger-sensor.eprj2`
+> 取代，解析报告见 `PCB/triger-sensor-解析报告.md`）。本程序仅用于旧实验板电流链路验证。
+
 独立于 trigger-board / current-test 的**单独测试程序**：只做一件事——开机后
 **每隔 1 秒读取一次电流，并从串口输出一个电流值**。用于电流检测链路
 （INA226 → I2C → 串口）的初步验证，不需要触发、连发识别等逻辑。

@@ -11,7 +11,8 @@
 连发模式下扳机持续按住、电流始终 > 1A，**每一发通过电流波动的"谷底 → 上升沿"
 检测**（`detectValleyShot`）：平滑后峰谷差 ≥ 0.8A 且距上一发 ≥ 30ms 即计一发（#SHOT）。
 
-板卡：`triger-sensor-current-test` 实验板（原理图见 `PCB/triger-sensor-current-test-新原理图分析.md`）。
+板卡：`triger-sensor-current-test` 实验板（旧实验板；已被正式板 `PCB/triger-sensor.eprj2` 取代，
+解析报告见 `PCB/triger-sensor-解析报告.md`；本实验板旧原理图分析见 git 历史 `PCB/triger-sensor-current-test-新原理图分析.md`）。
 
 ## 激发判定规则（射击点）
 
