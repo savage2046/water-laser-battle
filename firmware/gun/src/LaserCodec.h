@@ -1,23 +1,23 @@
 #pragma once
 #include <Arduino.h>
 
-// 红外激光帧结构（双波段冗余：两通道传相同完整 40bit 帧）
+// 红外激光帧结构（双载波冗余：两通道传相同完整 40bit 帧，波长统一 940nm）
 // playerId(16) + weaponId(4) + team(2) + res(2) + shotSeq(8) + chk(8)
 struct LaserFrame {
   uint16_t playerId;   // 射手 ID
   uint8_t weaponId;    // 武器类型 0步枪 1手枪 2狙击 3霰弹 4机枪
   uint8_t team;        // 队伍 0/1，3=无
   uint8_t shotSeq;     // 射击序号（每次扣扳机随机，接收方精确去重）
-  uint8_t channel;     // 接收通道：0=940nm 1=850nm（发射时忽略；940 击杀优先）
+  uint8_t channel;     // 接收通道：0=38kHz 远距 1=56kHz 近距（均 940nm；发射时忽略；远距击杀优先）
 };
 
-// 双波段红外编解码：38kHz(940nm, 加透镜远距) 与 56kHz(850nm, 宽光束近距)
+// 双载波红外编解码：38kHz(940nm, 加透镜远距) 与 56kHz(940nm, 宽光束近距)
 // 两通道**并行发射相同帧**（距离互补）；接收端任一通道解码成功即命中。
 class LaserCodec {
  public:
-  // tx940/tx850：两个波段发射引脚；rx940/rx850：两个波段接收引脚（中断）
-  // powerPin：940nm 功率档（高=远档）；pwr850A/pwr850B：850nm 功率档 bit0/bit1
-  // （0xFF=未接；仅 pwr850A 时 850nm 退化为 2 档）
+  // tx940/tx850：两个通道发射引脚；rx940/rx850：两个通道接收引脚（中断）
+  // powerPin：远距通道功率档（高=远档）；pwr850A/pwr850B：近距通道功率档 bit0/bit1
+  // （0xFF=未接；仅 pwr850A 时近距通道退化为 2 档）
   void begin(uint8_t tx940, uint8_t tx850, uint8_t rx940, uint8_t rx850,
              uint8_t powerPin = 0xFF, uint8_t pwr850A = 0xFF,
              uint8_t pwr850B = 0xFF);
@@ -26,9 +26,9 @@ class LaserCodec {
   void sendFrame(const LaserFrame &f);
 
   // 作用范围功率档位 0..3（全局，两通道独立映射）：
-  //   940nm: 档位≥2 → PIN_IR_POWER 拉高远档大电流
-  //   850nm: 档位按位映射 → bit0=A、bit1=B（00/01/10/11 = 0.5/1.0/1.5/2.0 × I_nom，
-  //          默认档 1 = 原 R3 校准电流，保持 20m 边界）
+  //   远距通道(38kHz): 档位≥2 → PIN_IR_POWER 拉高远档大电流
+  //   近距通道(56kHz): 档位按位映射 → bit0=A、bit1=B（00/01/10/11 = 0.5/1.0/1.5/2.0 × I_nom，
+  //          默认档 1 = 校准电流，保持 20m 边界）
   //          仅 A 可用时：档位≥1 → A 导通（2 档）
   void setPowerLevel(uint8_t level);
 

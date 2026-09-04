@@ -1,11 +1,11 @@
 # 红外激光管选型：型号推荐与参考电路
 
-> 面向本项目的"水弹枪对战"场景（38kHz/56kHz OOK、TSOP 接收头、双波段
-> 850nm 近距 / 940nm 远距）。核心结论先行：
+> 面向本项目的"水弹枪对战"场景（38kHz/56kHz 双载波 OOK、TSOP 接收头、波长统一
+> 940nm：38kHz 远距准直 / 56kHz 近距宽光束）。核心结论先行：
 >
 > **对战玩具场景强烈不建议使用真正的激光二极管（边发射 LD / 905nm 测距管）**。
 > 不可见红外准直光束直射眼睛可在瞬间造成不可逆视网膜损伤（Class 3B），
-> 且激光几乎不随距离衰减，会直接打破本项目"850nm 通道 ≤20m 刻意限距"的
+> 且激光几乎不随距离衰减，会直接打破本项目"近距通道（56kHz）≤20m 刻意限距"的
 > 平衡设计。**正确升级路线是：高功率红外 LED + 准直透镜（现有方案强化），
 > 或低功率 VCSEL（天然窄光束、可做到 Class 1 眼安全）**。
 
@@ -21,15 +21,20 @@
 | 驱动 | 限流电阻 + 开关管即可 | 同 LED（串联限流） | 需恒流驱动 + APC + ESD 保护，娇贵 |
 | 调制 | 任意（38kHz/56kHz OOK 无压力） | 任意 | 可调制，但 905nm 测距管是**单脉冲**设计 |
 | 成本 | ¥1-3 | ¥5-30（货源少） | ¥10-200+ |
-| 对 TSOP 接收头 | 完美匹配（峰值 940nm） | 匹配（940nm VCSEL） | 850nm LD 可配 TSOP4856；905nm 灵敏度下降 |
+| 对 TSOP 接收头 | 完美匹配（峰值 940nm） | 匹配（940nm VCSEL） | **发射波长必须 940nm**：850nm 与 TSOP 峰值失配会白丢 3~6dB；905nm 灵敏度进一步下降 |
 
 **本系统的硬约束**（决定选型）：
-1. 接收头是 TSOP38238（38kHz，峰值 ~940nm）与 TSOP4856（56kHz，峰值 ~940-950nm，
-   850nm 处相对灵敏度约 60% 仍可用）。
+1. 接收头分 **38kHz 与 56kHz 两档 IRM**（直插参考 TSOP38238 / TSOP4856，**现货候选
+   与贴片/SMD 方案见 §2.4**），所有型号光谱峰值都在
+   **~940-950nm**（TSOP 全家族均为 940nm 遥控接收头，不存在 850nm 峰值型号）。
+   为让接收端满灵敏度工作，**发射管统一选 940nm**（曾设想的 850nm 近距通道
+   与 TSOP 峰值失配 ~3~6dB，已弃用）。
 2. 载波是 38kHz/56kHz OOK 长帧（40bit，单帧 ~80ms）——**905nm 测距激光管
    是短脉冲测距设计（ns 级、低占空比），不能直接当 OOK 光源用**，排除。
-3. 850nm 通道被刻意限距 ≤20m（无透镜、低功率）；940nm 通道承担 20m+（透镜+档位）。
-   换激光管会同时破坏这两条约束。
+3. 近距通道（56kHz/940nm）被刻意限距 ≤20m（无透镜、低功率）；远距通道
+   （38kHz/940nm）承担 20m+（透镜+档位）。两通道同波长、靠载波频率区分，
+   互不串扰（38k/56k 间隔 18kHz，远超 TSOP 带通带宽）。换激光管会同时破坏
+   这两条约束。
 
 ---
 
@@ -37,7 +42,7 @@
 
 ### 2.1 红外 LED（推荐，维持现设计，只升级管子）
 
-**940nm 远距主通道（38kHz，TSOP38238）**：
+**远距主通道（940nm/38kHz，38kHz IRM）**：
 
 | 型号 | 厂家 | 封装 | 关键参数 | 说明 |
 | --- | --- | --- | --- | --- |
@@ -46,12 +51,12 @@
 | **IR333C / IR333A** | Everlight | 5mm | 940nm，~50mW/sr | 廉价走量款，够 20-40m |
 | **TSAL6200** | Vishay | 5mm | 940nm | 老牌经典，参数平庸但到处有货 |
 
-**850nm 近距通道（56kHz，TSOP4856）**：
+**近距通道（940nm/56kHz，56kHz IRM）**：
 
 | 型号 | 厂家 | 封装 | 关键参数 | 说明 |
 | --- | --- | --- | --- | --- |
-| **SFH 4715AS / SFH 4716AS** | ams-OSRAM | Oslon Black 3.85×3.85 | 850nm，CW 1A / 脉冲最高 5A | 高功率，本通道只需小电流（≤20m 限距），大电流余量用于校准余裕 |
-| **SFH 4841 / SFH 4511** | ams-OSRAM | 5mm | 850nm，IF 100mA | 5mm 小功率款（以 datasheet 为准） |
+| **SFH 4550**（与远距同款） | ams-OSRAM | 5mm | 940nm，~900mW/sr @100mA | BOM 归一化：近距档用小电流即可（≤20m 限距），无需透镜宽光束 |
+| **IR333C / TSAL6200** | Everlight / Vishay | 5mm | 940nm，~50mW/sr | 廉价款足够近距通道；宽光束 + 低功率档位限距 |
 
 > 若只是想小幅提升 940nm 射程：把现有 940nm LED 换成 **SFH 4550 + Φ8mm/f≈15mm
 > 短焦透镜**，其余电路不动（现有驱动电流 100-150mA 脉冲已在其规格内）。
@@ -61,7 +66,7 @@
 - **940nm VCSEL 阵列**（手机 ToF 同款，如 ams / Lumentum / II-VI 拆机料）：
   小发散角（半角 ~5-15°），出光面小、易加透镜整形；**低功率下可做 Class 1**。
   淘宝/闲鱼有拆机阵列，LCSC 有少量现货，需自行核对波长与电流规格。
-- **850nm 单管 VCSEL**（通信/传感用，2-5mW）：发散半角 ~8-12°，配 TSOP4856。
+- **940nm 单管 VCSEL**（ToF/通信/传感用，2-5mW）：发散半角 ~8-12°，配 38/56kHz IRM（TSOP 系，56k 候选见 §2.4）。
 - 驱动与 LED 相同（恒流或限流电阻 + 开关管），注意 VCSEL 正向压降 ~1.8-2.5V、
   阈值电流特性（低于阈值不出光，需加偏置电流）。
 - ⚠️ 货源不稳定、参数参差，适合"狙击手武器原型"探索，不适合量产。
@@ -70,12 +75,53 @@
 
 | 型号 | 波长/功率 | 说明 |
 | --- | --- | --- |
-| **L850P030 / L850G1**（Thorlabs/QSI 等） | 850nm，30mW / 5mW CW，TO-46 | 5mW 档+扩散片理论上可近 Class 1M；30mW 档**严禁**准直对射 |
-| 850nm 5mW 激光模块（淘宝成品） | 850nm，~5mW，自带准直 | 已是 Class 3R，直接对射仍危险 |
+| **L850P030 / L850G1**（Thorlabs/QSI 等） | 850nm，30mW / 5mW CW，TO-46 | 5mW 档+扩散片理论上可近 Class 1M；30mW 档**严禁**准直对射。**若原型确用 LD，选 940nm 档（如 Thorlabs L940P30 类）以匹配 TSOP 峰值** |
+| 850nm 5mW 激光模块（淘宝成品） | 850nm，~5mW，自带准直 | 已是 Class 3R，直接对射仍危险；同理需 940nm 档才与接收匹配 |
 | **SPL PL90_3**（OSRAM，905nm 测距管） | 25W 脉冲，ns 级单脉冲 | **不兼容 OOK 长帧**，仅工业测距，排除 |
 
 驱动 IC 参考：iC-Haus **iC-HG / iC-HTG**（集成 APC 的激光驱动芯片，最高 ~1A）、
 **iC-NZN**；廉价替代是分立 APC（见 §3.3）。
+
+### 2.4 接收头现货候选：贴片(SMD)优先（38kHz / 56kHz 双表，940nm 峰值）
+
+> 波长统一 940nm 后，接收头 = **任意 940nm 峰值、对应载波带通的 IRM**。
+> **SMT 回流焊必须用贴片件**。注意封装事实（立创商城字段核实）：
+> - Vishay **直插系**：TSOP38238/4856/38256/312xx/348xx、TSOP14456/18156/59256、
+>   TSOP384xx 等 —— 均为 **SIP-3-2.54 / 插件直插**，货足但**不是贴片**；
+> - Vishay 可贴片的是新一代 **4 脚 SMD 微型双透镜系 TSOP39xxx / TSOP75xxx**
+>   （顶视/侧视变体、超小 footprint、编带包装，**Pinning：1、4=GND，2=VS，3=OUT**）；
+> - **国产 3 脚 SMD IRM**（如 XINGLIGHT 成兴光 XL-IRM-V838M3/TR）是低成本贴片主流，
+>   **38kHz 侧本项目已选定该方案**（下表）。
+> 本项目不要求引脚兼容，PCB footprint 按所选型号重画即可。
+> ⚠️ 换贴片件后：视场角/阈值以所选型号手册为准（XL-IRM-V838M3/TR 半角 ±45° 与直插
+> TSOP38238 相同，覆盖数学不变；阈值 Ee 以手册为准，限距校准线实测微调即可）。
+
+**38kHz —— 远距通道 + 头盔全向环 + 校准靶阵列（用量最大）**：
+
+| 型号 | 品牌 | 封装 | 立创商城/嘉立创料号 | 关键参数 |
+| --- | --- | --- | --- | --- |
+| **XL-IRM-V838M3/TR** ✅ 选定 | XINGLIGHT 成兴光 | SMD 环氧塑封 6.8×3.0×3.2mm（含引脚，双屏蔽） | **C51900936** | 38kHz（**37.9k**，发射 38.46k 偏差 0.6k 在带通内 ✓）；**940nm 峰值**；2.7~5.5V / 0.22~0.6mA；**半角 ±45°**（0° 方向 40m、±45° 25m，与直插 TSOP38238 相当 → 全向环覆盖数学不变）；TTL/CMOS 低有效；TR=编带可回流焊 |
+| 备选：TSOP39238 | Vishay | 4 脚 SMD 顶视微型 | [item 8095213](https://item.szlcsc.com/8095213.html) | 新代微型双透镜（引脚 1、4=GND 需重排） |
+| 备选：TSOP75438WTT | Vishay | 4 脚 SMD，±50° | [item 8040702](https://item.szlcsc.com/8040702.html) / C7074088 | AGC4，45m |
+| 兜底直插：TSOP38238 / VS1838B | Vishay/国产 | SIP-3-2.54 | C141632 等 | 手工焊/洞洞板/备胎 |
+
+**56kHz —— 近距通道（贴片优先；4856/38256 常缺货且是直插）**：
+
+| 型号 | 封装 | 立创商城/嘉立创料号 | 备注 |
+| --- | --- | --- | --- |
+| **TSOP39256** | 4 脚 SMD 顶视微型 | C6561183 | 新代微型双透镜 |
+| **TSOP75556WTT / TR** | 4 脚 SMD | [item 6732396](https://item.szlcsc.com/6732396.html) / C3742896（[item 4310422](https://item.szlcsc.com/4310422.html)） | 编带 |
+| 兜底直插：TSOP4856 / TSOP38256 / TSOP31256 / TSOP34856 | SIP-3-2.54 | C3742796 / C6291858 / [item 222795](https://item.szlcsc.com/222795.html) / [item 3482384](https://item.szlcsc.com/3482384.html) | 常缺货 |
+| 兜底直插：TSOP14456 / TSOP18156 / TSOP59256 | 插件 | C6339495 / C6291837 / C6886794 | 老系列（700µA） |
+| 亿光 IRM-3656T / IRM-2756 | 直插 | [IRM-3656M3](https://item.szlcsc.com/product/jpg_20409454.html) / [IRM-2756](https://item.szlcsc.com/product/jpg_7531913.html) | 亿光直插 |
+
+- **下单动作**：点表内料号看实时库存与封装实物图（或到[立创 IRM 目录](https://list.szlcsc.com/catalog/11174.html)
+  按"载波频率 + 封装"过滤），挑有货的贴片件；确认后同步更新 cost-estimate.md BOM、
+  PCB footprint 与本表"选定料号"。
+- **38kHz 侧已定 XL-IRM-V838M3/TR（成兴光 XINGLIGHT，立创 C51900936）**：3 脚 SMD
+  贴片、940nm、±45°，参数与原直插 TSOP38238 同级（此件亦为亿光 IRM-V838M3 系兼容
+  替代，亿光原版 IRM-V838M3-C/TR1 为 C3291489 可互换）；PCB footprint 用立创 C51900936
+  封装画，PCBA 打样（嘉立创/华秋 SMT）直接按 C51900936 下单。
 
 ---
 
@@ -93,8 +139,9 @@
 ```
 - 38kHz/56kHz 载波 + 数据由 GPIO 直接翻转产生（半周期 13.16µs / 8.93µs），
   驱动管只做电平转换/扩流，**现有固件逻辑零改动**。
-- 850nm 通道同构，限流电阻组由 IR_PWR_850_A/B 两个 GPIO 选档（4 档电流，
-  默认档 0/1 目标"10m 触发、20m 不触发"，见 hardware-design.md §6.5）。
+- 近距通道（56kHz/940nm）同构，限流电阻组由 IR_PWR_850_A/B 两个 GPIO 选档（历史
+  命名，实为 940nm 近距通道；4 档电流，默认档 0/1 目标"10m 触发、20m 不触发"，
+  见 hardware-design.md §6.5）。
 
 ### 3.2 VCSEL 驱动（与 LED 同构，注意阈值偏置）
 
@@ -161,18 +208,19 @@
 
 ## 4. 与本项目集成建议
 
-| 方案 | 940nm 远距通道 | 850nm 近距通道 | 固件改动 | 眼安全 | 结论 |
+| 方案 | 远距通道（940nm/38kHz） | 近距通道（940nm/56kHz） | 固件改动 | 眼安全 | 结论 |
 | --- | --- | --- | --- | --- | --- |
 | A. 保持 LED，升级 SFH 4550 + 透镜 | SFH 4550（38kHz） | SFH 4715AS，**4 档软件可调**（56kHz） | 无（选档 GPIO 已接入固件） | ✅ Class 1 | **推荐** |
 | B. VCSEL 原型 | 940nm VCSEL 低功率 | 保持 LED | 无（驱动同 LED） | ✅ 需评估 | 探索"狙击手武器"时做 |
-| C. 边发射 LD | 850nm LD ≤5mW + 扩散 | — | 需 APC 驱动代码 | ⚠️ 仅 Class 1M 边界 | 不建议量产 |
+| C. 边发射 LD | 940nm LD ≤5mW + 扩散 | — | 需 APC 驱动代码 | ⚠️ 仅 Class 1M 边界 | 不建议量产 |
 | D. 905nm 测距管 | — | — | 不兼容 OOK | ❌ Class 3B/4 | 排除 |
 
-- 若走方案 B/C，注意 **850nm 通道 20m 限距设计会被破坏**：激光不随距离衰减，
+- 若走方案 B/C，注意 **近距通道（56kHz）20m 限距设计会被破坏**：激光不随距离衰减，
   需重新用"功率档位 + 数字衰减（每 N 米间歇发射）"模拟距离衰减，复杂度高
-  （LED 方案的 850nm 已由 4 档功率部分缓解，见 hardware-design.md §6.5）。
+  （LED 方案的近距通道已由 4 档功率部分缓解，见 hardware-design.md §6.5）。
 - 引脚（S3 重映射）：IR_TX=GPIO1 / IR_TX_850=GPIO2 / PIN_IR_POWER=GPIO41 /
-  **IR_PWR_850_A=GPIO44 / IR_PWR_850_B=GPIO43**（B 可选，被 UART0 占用则 2 档），
+  **IR_PWR_850_A=GPIO44 / IR_PWR_850_B=GPIO43**（B 可选，被 UART0 占用则 2 档；
+  IR_TX_850 / IR_PWR_850_* 为历史命名，实为 940nm 近距通道），
   驱动管从 2N7002 换成更大电流管（如 AO3400，若走 VCSEL 高脉冲电流）。
 - 校准流程沿用 `docs/calibration-target.md`（1m/5m/15m/30m 成功率 >95%）；
   各档位**需要的光功率**（峰值 mW / mW/sr）见 [docs/link-budget.md](link-budget.md)。
@@ -182,9 +230,11 @@
 ## 5. 参考链接
 
 - OSRAM SFH 4550 / SFH 4545 数据手册（ams-OSRAM 官网）
-- [OSRAM 高功率红外 LED（Oslon Black 家族，850nm 脉冲 5A）— ams-OSRAM 新闻](https://ams-osram.com/ko/news/press-releases/pr-11-04-2018)
-- [Vishay TSOP4856 数据手册（56kHz，峰值 940-950nm）](https://www.alldatasheet.com/html-pdf/26665/VISHAY/TSOP4856UH1/945/5/TSOP4856UH1.html)
-- [Thorlabs L850P030（850nm 30mW LD，TO-46）](https://punchout.thorlabs.com/thorproduct.cfm?partnumber=L850P030)
+- [OSRAM 高功率红外 LED（Oslon Black 家族，脉冲 5A，含 940nm 档）— ams-OSRAM 新闻](https://ams-osram.com/ko/news/press-releases/pr-11-04-2018)
+- [Vishay TSOP4856 数据手册（56kHz，峰值 940-950nm；直插参考，现货/贴片候选见 §2.4）](https://www.alldatasheet.com/html-pdf/26665/VISHAY/TSOP4856UH1/945/5/TSOP4856UH1.html)
+- [Vishay TSOP752/754 规格书（4 脚 SMD 微型系，DigiKey 在线手册）](https://www.digikey.cn/zh/htmldatasheets/production/1285037/0/0/2/tsop75438tt)
+- [Vishay TSOP75556 数据手册（56kHz，4 脚 SMD，datasheet4u）](https://datasheet4u.com/datasheets/Vishay/TSOP75556/1103846)
+- Thorlabs 940nm 激光二极管（如 L940P30 类，TO-46）——需 940nm 档才能匹配 TSOP 峰值
 - [iC-Haus 激光二极管驱动 IC（iC-HG / iC-HTG，集成 APC）](https://ichauschina.com/en/products/laser.htm)
 - [高功率脉冲 VCSEL 驱动电路设计方法（世强）](https://www.sekorm.com/news/30092763.html)
 - [半导体激光器驱动电路设计：从恒流源到精密调制](https://www.instrument.com.cn/netshow/SH103429/news_925754.htm)

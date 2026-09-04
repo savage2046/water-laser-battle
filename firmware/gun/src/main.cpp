@@ -395,7 +395,7 @@ void loop() {
     tdmaSend(TF_HB, NULL, 0);
   }
 
-  // 3) 扳机 → 开火（双波段红外发射 + 电机并行联动 + F 帧）
+  // 3) 扳机 → 开火（双载波红外发射 38/56kHz + 电机并行联动 + F 帧）
   //    无改装联动：扳机源 = 本地微动（改装/校准）或检测板 ESP-NOW 开火事件
   bool trig = readTrigger() || gunEspNow.takeFire();
   if (menu.calibrating()) {

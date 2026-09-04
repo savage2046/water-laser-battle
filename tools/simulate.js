@@ -270,7 +270,7 @@ setInterval(() => {
   const hpLeft = Math.max(0, victim.hp);
   const weapon = Math.floor(Math.random() * 5);  // 0-4 武器
   const shotSeq = Math.floor(Math.random() * 256);  // 0-255 模拟红外帧序号
-  const channel = Math.random() < 0.7 ? 0 : 1;  // 0=940 1=850（940 为主）
+  const channel = Math.random() < 0.7 ? 0 : 1;  // 0=远距 38k 1=近距 56k（远距为主，波长统一 940nm）
   const gw = gateways[0];
   gw.send({
     t: 'devHit', gatewayId: gw.id, deviceId: victim.deviceId,
@@ -291,7 +291,7 @@ setInterval(() => {
   if (victim.hp <= 0) {
     victim.alive = false;
     victim.hp = 0;
-    // 模拟网关判定：首杀 newKill=true；energy 模拟同波段光强（双帧强弱）
+    // 模拟网关判定：首杀 newKill=true；energy 模拟同通道光强（双帧强弱）
     const energy = Math.random() < 0.5 ? 200 : 100;
     const gw2 = gateways[0];
     gw2.send({
