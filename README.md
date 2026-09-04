@@ -34,9 +34,9 @@ water-laser-battle/
 ├── docs/                  # 架构、无线方案、TDMA MAC/协议、硬件接线、算力估算
 ├── firmware/
 │   ├── lib/tdma/          # 共享 TDMA 库（TdmaMac 自适应 MAC + TdmaProto 10B 帧）
-│   ├── gun/               # 水弹枪端固件（ESP32 + SX1262 470M + 双波段红外 + OLED）
-│   ├── helmet/            # 头盔接收器固件（4路双波段红外 + 470M T帧/GPS上报）
-│   ├── target/            # 激光校准靶（9路阵列 + 双波段解码 + OLED）
+│   ├── gun/               # 水弹枪端固件（ESP32 + SX1262 470M + 双通道红外 + OLED）
+│   ├── helmet/            # 头盔接收器固件（4路双通道红外 + 470M T帧/GPS上报）
+│   ├── target/            # 激光校准靶（5×3 二维阵列 15 路 38k 检测 + 中心解码 + 灯阵/OLED）
 │   ├── espnow-verify/     # 电流检测板 ESP-NOW 信号验证固件（接收/统计/下行测试）
 │   └── gateway/           # 基地台网关固件（470M⇄WebSocket 桥接 + 开机自检/多射频）
 ├── server/                # Node.js 对战服务器 + Web 控制台
@@ -84,7 +84,7 @@ pio run -t upload
 
 | 功能 | 实现位置 |
 | --- | --- |
-| 激光命中判定（双波段同帧冗余 + 准直透镜远距增强） | firmware/gun: `LaserCodec` |
+| 激光命中判定（双通道同帧冗余：38/56kHz 双载波统一 940nm + 准直透镜远距增强） | firmware/gun: `LaserCodec` |
 | 作用范围控制（功率档位 + 双帧 + 开火 <200ms） | firmware/gun: `LaserCodec` + server |
 | 血量 / 弹药 / 装弹 / 重生状态机 | firmware/gun: `GunState` |
 | 470MHz LoRa 上报（SX1262 SPI 直驱，紧凑帧 + seq，ALOHA 过渡版） | firmware: `RadioLink` |
@@ -100,7 +100,7 @@ pio run -t upload
 | 运动唤醒 GPS（LIS3DH 中断，静止 0mA 按需定位） | firmware/helmet: `MotionSensor` |
 | 9 轴朝向记录（MPU9250，回放用） | firmware/helmet: `Imu9Axis` |
 | 战术地图（Canvas 实时玩家位置） | server/public: `app.js` |
-| 头盔接收器（4路双波段红外 + T帧上报 + master 转发） | firmware/helmet + server |
+| 头盔接收器（4路双通道红外 + T帧上报 + master 转发） | firmware/helmet + server |
 | 多网关漫游（共听上报、服务器去重、下行广播） | firmware/gateway + server |
 | 网关间直连（UDP 组播，命中即时感知 <5ms） | firmware/gateway: `mcastSend/mcastPoll` |
 | 网关显示屏（连接状态/设备数/最近命中事件） | firmware/gateway: `Display` |
@@ -108,10 +108,10 @@ pio run -t upload
 | 实时计分与排行榜 | server: `scoring.js` + Web 控制台 |
 | 战绩持久化（JSON 文件） | server: `store.js` |
 | 对局回放（JSONL 事件流） | server: `replay.js` |
-| 激光校准靶（9路阵列 + 双波段解码 + OLED） | firmware/target |
+| 激光校准靶（5×3 二维阵列：15 路 38k 光斑检测 + 中心解码 + 灯阵/OLED） | firmware/target |
 | 户外强光自适应（环境光检测 + 自动升档） | firmware/gun + docs/outdoor-reliability.md |
 | 随机 shotSeq 防作弊（硬件真随机） | firmware/gun: `esp_random()` |
-| 一发一杀（网关唯一判定：跨波段 940 优先 + 同波段光强） | firmware/gateway + server |
+| 一发一杀（网关唯一判定：跨通道远距 38kHz 优先 + 同通道光强） | firmware/gateway + server |
 | 设备日志（LogBuf 缓冲 + 时机上传 + 服务器落盘） | firmware/gun: `LogBuf` + server |
 | 枪端菜单（3键项：配对头盔/加入战斗/校准激光） | firmware/gun: `Menu` |
 

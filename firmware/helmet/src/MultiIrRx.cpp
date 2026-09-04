@@ -80,7 +80,7 @@ bool MultiIrRx::Chan::decode(uint64_t &outBuf) {
 }
 
 bool MultiIrRx::poll(LaserFrame &out) {
-  // 所有通道独立解码，任一成功且校验通过即命中；通道 0/1=940nm，2/3=850nm
+  // 所有通道独立解码，任一成功且校验通过即命中；通道 0/1=38kHz（远距），2/3=56kHz（近距）
   for (uint8_t i = 0; i < _count; i++) {
     uint64_t buf = 0;
     if (_ch[i].decode(buf)) {
@@ -94,7 +94,7 @@ bool MultiIrRx::poll(LaserFrame &out) {
         out.weaponId = (b2 >> 4) & 0x0F;
         out.team = (b2 >> 2) & 0x03;
         out.shotSeq = b3;
-        out.channel = (i < 2) ? 0 : 1;  // 0/1=940nm, 2/3=850nm
+        out.channel = (i < 2) ? 0 : 1;  // 0/1=38kHz 远距, 2/3=56kHz 近距
         return true;
       }
     }

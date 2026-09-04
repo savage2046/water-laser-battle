@@ -145,7 +145,7 @@ export class Match {
   // 设备阵亡 → 计分 + 胜局判定 + 调度重生
   // 判定完全由网关完成（newKill/upgrade，组播协调多网关），服务器仅执行结果：
   //   newKill=true  → 计击杀（kills+1）
-  //   upgrade=true  → 抢占（940 优先/同波段光强），击杀归属转移（kills 数不变，
+  //   upgrade=true  → 抢占（远距 38kHz 优先/同通道光强），击杀归属转移（kills 数不变，
   //                   victim 换更优命中者）
   //   newKill=false → 网关判定同发重复，不计击杀（deaths 照常 +1）
   // _killSeen 仅记录当前击杀归属（供 upgrade 转移），不做去重判定。

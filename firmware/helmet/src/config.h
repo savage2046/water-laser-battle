@@ -7,11 +7,11 @@
 #define DEVICE_NAME "玩家A头盔"
 #define FW_VERSION "1.0.0"
 
-// ===== 红外接收（双波段 × 前后方位 = 4 路，360° 覆盖）=====
-#define PIN_IR_RX0 26            // 前路 940nm TSOP38238（38kHz，中断引脚）
-#define PIN_IR_RX1 25            // 后路 940nm TSOP38238（38kHz，中断引脚）
-#define PIN_IR_RX850_0 36        // 前路 850nm TSOP4856（56kHz，纯输入）
-#define PIN_IR_RX850_1 39        // 后路 850nm TSOP4856（56kHz，纯输入）
+// ===== 红外接收（双载波 38/56kHz × 前后方位 = 4 路，波长统一 940nm，360° 覆盖）=====
+#define PIN_IR_RX0 26            // 前路 38kHz IRM：XL-IRM-V838M3/TR（成兴光，940nm 峰值，中断引脚）
+#define PIN_IR_RX1 25            // 后路 38kHz IRM：XL-IRM-V838M3/TR（成兴光，940nm 峰值，中断引脚）
+#define PIN_IR_RX850_0 36        // 前路 56kHz IRM（940nm 峰值，SMD 首选，纯输入；历史命名 _850）
+#define PIN_IR_RX850_1 39        // 后路 56kHz IRM（940nm 峰值，SMD 首选，纯输入；历史命名 _850）
 #define IR_RX_COUNT 4
 
 // ===== SX1262 470MHz LoRa（SPI 直驱）=====

@@ -63,9 +63,9 @@ void LaserCodec::begin(uint8_t tx940, uint8_t tx850, uint8_t rx940,
 }
 
 // 功率档位（全局 0..3，两通道独立映射）：
-//   940nm: 档位≥2 → PIN_IR_POWER 拉高远档大电流（近档 0/1）
-//   850nm: bit0=IR_PWR_850_A、bit1=IR_PWR_850_B，00/01/10/11 →
-//          0.5/1.0/1.5/2.0 × I_nom（I_nom=原 R3 校准电流；默认档 1 保持 20m 边界）
+//   远距通道(38kHz/940nm): 档位≥2 → PIN_IR_POWER 拉高远档大电流（近档 0/1）
+//   近距通道(56kHz/940nm，历史命名 _850): bit0=IR_PWR_850_A、bit1=IR_PWR_850_B，
+//          00/01/10/11 → 0.5/1.0/1.5/2.0 × I_nom（I_nom=校准电流；默认档 1 保持 20m 边界）
 //          仅 A 可用时退化为 2 档（档位≥1 → 1.0·I_nom）
 void LaserCodec::setPowerLevel(uint8_t level) {
   _powerLevel = level;
@@ -85,7 +85,7 @@ void LaserCodec::setPowerLevel(uint8_t level) {
 // 双通道并行位发送状态（每通道独立时钟，发相同数据）
 struct ChanTx {
   uint8_t pin;
-  uint32_t halfUs;        // 载波半周期（38kHz→13µs，56kHz→9µs）
+  uint32_t halfUs;        // 载波半周期（config.h：IR_CARRIER_HALF_US=13 / _850=9）
   bool level = false;
   bool carrier = false;
   bool done = false;
@@ -118,12 +118,12 @@ void LaserCodec::sendFrame(const LaserFrame &f) {
     if (now >= flip940) {
       lvl940 = !lvl940;
       digitalWrite(_tx940, lvl940);
-      flip940 = now + 13;
+      flip940 = now + IR_CARRIER_HALF_US;        // 38.46kHz（XL-IRM-V838M3 带通内）
     }
     if (now >= flip850) {
       lvl850 = !lvl850;
       digitalWrite(_tx850, lvl850);
-      flip850 = now + 9;
+      flip850 = now + IR_CARRIER_HALF_US_850;    // 55.6kHz（56k 接收头待定）
     }
   }
   digitalWrite(_tx940, LOW);
@@ -142,8 +142,8 @@ void LaserCodec::sendFrame(const LaserFrame &f) {
   // C++11 下含默认成员初始化器的结构体不是聚合体，不能用花括号初始化——
   // 改为默认构造后逐字段赋值（语义与原 10 字段列表一致）
   ChanTx chA, chB;
-  chA.pin = _tx940;  chA.halfUs = 13; chA.bytes = bytes; chA.bitPos = 7;
-  chB.pin = _tx850;  chB.halfUs = 9;  chB.bytes = bytes; chB.bitPos = 7;
+  chA.pin = _tx940;  chA.halfUs = IR_CARRIER_HALF_US; chA.bytes = bytes; chA.bitPos = 7;
+  chB.pin = _tx850;  chB.halfUs = IR_CARRIER_HALF_US_850; chB.bytes = bytes; chB.bitPos = 7;
   uint32_t now0 = micros();
   chA.carrier = true;  chA.flipAt = now0;  chA.phaseUntil = now0 + IR_BIT_HIGH_US;
   chB.carrier = true;  chB.flipAt = now0;  chB.phaseUntil = now0 + IR_BIT_HIGH_US;

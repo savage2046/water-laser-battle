@@ -4,6 +4,7 @@
 FrameRx frameRx;
 
 static void IRAM_ATTR irEdgeISR940() {
+  frameRx.act[0] = true;  // 中心颗有信号（任意边沿）
   FrameRx::Chan &ch = frameRx.channel(0);
   uint32_t now = micros();
   uint8_t lvl = digitalRead(ch.pin);
@@ -17,6 +18,7 @@ static void IRAM_ATTR irEdgeISR940() {
 }
 
 static void IRAM_ATTR irEdgeISR850() {
+  frameRx.act[1] = true;
   FrameRx::Chan &ch = frameRx.channel(1);
   uint32_t now = micros();
   uint8_t lvl = digitalRead(ch.pin);
@@ -32,8 +34,10 @@ static void IRAM_ATTR irEdgeISR850() {
 void FrameRx::begin(uint8_t rx940, uint8_t rx850) {
   _ch[0].pin = rx940;
   _ch[1].pin = rx850;
-  pinMode(_ch[0].pin, INPUT);
-  pinMode(_ch[1].pin, INPUT);
+  // INPUT_PULLUP：IRM 输出为推挽空闲高，弱上拉无冲突；56k 预留脚（rx850）未贴件时
+  // 悬空，靠内部上拉钉在高电平，避免边沿毛刺触发假解码
+  pinMode(_ch[0].pin, INPUT_PULLUP);
+  pinMode(_ch[1].pin, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(_ch[0].pin), irEdgeISR940, CHANGE);
   attachInterrupt(digitalPinToInterrupt(_ch[1].pin), irEdgeISR850, CHANGE);
 }
@@ -103,7 +107,7 @@ bool FrameRx::poll(LaserFrame &out) {
         out.weaponId = (b2 >> 4) & 0x0F;
         out.team = (b2 >> 2) & 0x03;
         out.shotSeq = b3;
-        out.channel = i;  // 0=940nm 1=850nm
+        out.channel = i;  // 0=38kHz 远距 1=56kHz 近距
         return true;
       }
     }
