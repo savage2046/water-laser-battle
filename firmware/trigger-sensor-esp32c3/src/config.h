@@ -33,12 +33,18 @@
 #define STALL_MS 2000        // 持续高电流 = 堵转（过流保护自动断电）
 #define END_MS 50            // 低电流持续 = 发射结束
 #define SENSE_INTERVAL_MS 1  // 采样间隔（INA226 实际转换周期 ~1.18ms 自然限速）
+#define CUR_LOG_INTERVAL_MS 200  // 开火期间电流串口输出周期（0.2s）
+
+// ===== 三次触发自动断电（N 发打完模拟空弹/回合结束）=====
+#define SHOT_LIMIT 5           // 每发脉冲计 1 次，累计满 N 发自动断电
+#define AUTO_RECOVER_MS 3000    // 自动断电后延时自动恢复导通并清零计数
+#define FAULT_SHOT_LIMIT 0x02   // FRAME_FAULT d0：N发打完自动断电（会自动恢复）
 
 // ===== ESP-NOW（检测板 → 枪端主控）=====
 #define ESPNOW_CHANNEL 1
 #define FRAME_MAGIC 0xA5
 #define FRAME_FIRE  0x01     // 开火脉冲（每发；d0=序号）
 #define FRAME_HB    0x02     // 心跳（d0=1s 计数）
-#define FRAME_FAULT 0x03     // 异常（d0=0x01 堵转保护断电）
+#define FRAME_FAULT 0x03     // 异常（d0=0x01 堵转保护断电；0x02 N发打完自动断电）
 #define FRAME_POWER 0x10     // 断电/恢复指令（枪端→检测板；d0=0 断 1 通）
 #define HB_INTERVAL_MS 1000

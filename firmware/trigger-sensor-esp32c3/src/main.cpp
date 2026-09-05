@@ -7,7 +7,7 @@
 // ============================================================
 // triger-sensor.eprj2 正式板检测板主程序（ESP32-C3-WROOM-02-N4）
 // 电流检测扳机/连发 → ESP-NOW 逐发上报枪端
-// MOSFET 物理断电（防作弊）：枪端指令 / 堵转自保护
+// MOSFET 物理断电（防作弊）：枪端指令 / 堵转自保护 / 三次触发后自动断电
 // ============================================================
 CurrentSense sense;
 PowerSwitch pwr;
@@ -15,14 +15,28 @@ EspNowLink espLink;
 
 static uint8_t g_fireSeq = 0;   // 开火帧序号（检测板侧）
 static uint8_t g_hbCount = 0;
+static uint8_t g_shotCount = 0;   // 本次上电周期已发数（每发计 1 次）
+static bool   g_autoRecover = false;   // 三次触发自动断电后，等待延时自动恢复
+static unsigned long g_autoRecoverAt = 0;
 static unsigned long g_lastHb = 0;
 static unsigned long g_lastSense = 0;
+static unsigned long g_lastCurLog = 0;   // 上次电流串口输出时刻（0=空闲复位）
 
 // ===== 识别回调 → ESP-NOW 上报 =====
 static void onFirePulse() {
   espLink.send(FRAME_FIRE, ++g_fireSeq, 0);
   digitalWrite(PIN_LED, HIGH);   // 每发闪灯（视觉反馈）
   Serial.printf("[fire] #%u\n", g_fireSeq);
+
+  // 三次触发：每发计 1，累计满 SHOT_LIMIT 发 → 物理断电（模拟空弹/回合结束）
+  if (pwr.isOn() && ++g_shotCount >= SHOT_LIMIT) {
+    pwr.off();
+    g_autoRecover = true; 
+    g_autoRecoverAt = millis();
+    espLink.send(FRAME_FAULT, FAULT_SHOT_LIMIT, 0);
+    Serial.printf("[limit] %d shots done -> power OFF, auto ON after %u ms\n",
+                  SHOT_LIMIT, AUTO_RECOVER_MS);
+  }
 }
 static void onFireEnd() {
   digitalWrite(PIN_LED, LOW);
@@ -40,9 +54,14 @@ static void handleRx() {
   while (espLink.received(type, d0)) {
     if (type == FRAME_POWER) {
       if (d0 == 0x00) {
+        // 枪端指令断电（击杀/空弹/暂停…）：取消等待中的自动恢复，保持断开
+        g_autoRecover = false;
         pwr.off();
         Serial.println("[pwr] OFF (killed/empty)");
       } else {
+        // 枪端指令恢复（重生/装弹）：清零计数，重新累计 SHOT_LIMIT 发
+        g_autoRecover = false;
+        g_shotCount = 0;
         pwr.on();
         Serial.println("[pwr] ON (respawn/reload)");
       }
@@ -55,7 +74,16 @@ void setup() {
   delay(200);            // 等待串口稳定（原生 USB-C CDC）
 
   pinMode(PIN_LED, OUTPUT);
-  digitalWrite(PIN_LED, LOW);
+  digitalWrite(PIN_LED, 1);
+
+  // while (!Serial) {
+  //   delay(10); // 等待直到串口就绪
+  // }
+
+  Serial.println("[board] triger-sensor esp32c3 start");
+
+  delay(1000);
+  digitalWrite(PIN_LED,0);
 
   pwr.begin();           // 默认导通
   sense.begin();
@@ -88,6 +116,25 @@ void loop() {
     g_lastSense = now;
     sense.update(now);
   }
+
+  // 开火（发射状态 FIRING/STALL）期间每 0.2s 输出一次电流值；
+  // 空闲时复位计时 → 每次开火第一点立即输出，之后按周期输出
+  if (sense.state() != CurrentSense::IDLE) {
+    if (now - g_lastCurLog >= CUR_LOG_INTERVAL_MS) {
+      g_lastCurLog = now;
+      Serial.printf("[cur] I=%.2fA\n", (double)sense.lastCurrentA());
+    }
+  } else {
+    g_lastCurLog = 0;
+  }
+
+  // 三次触发自动断电 → 延时到点后自动恢复导通（清零计数重新累计）
+  // if (g_autoRecover && now - g_autoRecoverAt >= AUTO_RECOVER_MS) {
+  //   g_autoRecover = false;
+  //   g_shotCount = 0;
+  //   pwr.on();
+  //   Serial.println("[limit] auto recover ON, counter reset");
+  // }
 
   // ESP-NOW 指令处理
   handleRx();

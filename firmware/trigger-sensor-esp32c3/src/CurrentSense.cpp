@@ -72,6 +72,7 @@ void CurrentSense::calibrateIdle(uint32_t ms) {
 
 void CurrentSense::update(uint32_t now) {
   float i = currentA() - _idleOffset;
+  _lastA = i;               // 记录本次净电流，供开火回调等读取
   bool high = i > TRIG_CURRENT_A;
 
   switch (_state) {

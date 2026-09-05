@@ -15,6 +15,7 @@ class CurrentSense {
   float currentA();      // 读取当前瞬时电流（A，含空闲偏置）
   void update(uint32_t now);   // 主循环每 SENSE_INTERVAL_MS 调用
   State state() { return _state; }
+  float lastCurrentA() const { return _lastA; }  // 最近一次采样的净电流（A，已扣空闲基线）
 
   // 回调（main.cpp 注入）
   void (*onFirePulse)(void) = nullptr;  // 每发（含第一发）
@@ -29,4 +30,5 @@ class CurrentSense {
   bool _lastHigh = false;
   uint32_t _hiSince = 0, _loSince = 0, _lastPulse = 0;
   float _idleOffset = 0;
+  float _lastA = 0;   // 最近一次 update() 采样到的净电流（扣基线后）
 };
