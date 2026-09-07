@@ -38,6 +38,8 @@ water-laser-battle/
 │   ├── helmet/            # 头盔接收器固件（4路双通道红外 + 470M T帧/GPS上报）
 │   ├── target/            # 激光校准靶（5×3 二维阵列 15 路 38k 检测 + 中心解码 + 灯阵/OLED）
 │   ├── espnow-verify/     # 电流检测板 ESP-NOW 信号验证固件（接收/统计/下行测试）
+│   ├── trigger-board/     # 检测板正式固件（ESP32-C3：INA226 电流识别 + MOSFET 断电 + ESP-NOW）
+│   ├── trigger-board-selftest/  # 检测板(ESP32-C3)硬件自检固件：INA226 电流检测 + ESP-NOW 连接
 │   └── gateway/           # 基地台网关固件（470M⇄WebSocket 桥接 + 开机自检/多射频）
 ├── server/                # Node.js 对战服务器 + Web 控制台
 └── tools/simulate.js      # 无硬件模拟器（模拟多网关 + 虚拟设备）
