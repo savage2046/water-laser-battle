@@ -1,0 +1,119 @@
+#include "FrameRx.h"
+#include "config.h"
+
+FrameRx frameRx;
+
+static void IRAM_ATTR irEdgeISR940() {
+  frameRx.act[0] = true;  // 中心颗有信号（任意边沿）
+  FrameRx::Chan &ch = frameRx.channel(0);
+  uint32_t now = micros();
+  uint8_t lvl = digitalRead(ch.pin);
+  uint8_t h = ch.head;
+  uint8_t next = (h + 1) % 128;
+  if (next != ch.tail) {
+    ch.edgeTime[h] = now;
+    ch.edgeLevel[h] = lvl;
+    ch.head = next;
+  }
+}
+
+static void IRAM_ATTR irEdgeISR850() {
+  frameRx.act[1] = true;
+  FrameRx::Chan &ch = frameRx.channel(1);
+  uint32_t now = micros();
+  uint8_t lvl = digitalRead(ch.pin);
+  uint8_t h = ch.head;
+  uint8_t next = (h + 1) % 128;
+  if (next != ch.tail) {
+    ch.edgeTime[h] = now;
+    ch.edgeLevel[h] = lvl;
+    ch.head = next;
+  }
+}
+
+void FrameRx::begin(uint8_t rx940, int rx850) {
+  _ch[0].pin = rx940;
+  _ch[1].pin = rx850 < 0 ? (uint8_t)0xFF : (uint8_t)rx850;
+  // INPUT_PULLUP：IRM 输出为推挽空闲高，弱上拉无冲突；56k 预留脚（rx850）未贴件时
+  // 悬空，靠内部上拉钉在高电平，避免边沿毛刺触发假解码
+  pinMode(_ch[0].pin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(_ch[0].pin), irEdgeISR940, CHANGE);
+  if (_ch[1].pin != 0xFF) {  // rx850 < 0 → 单通道（只解码 38k 格）
+    pinMode(_ch[1].pin, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(_ch[1].pin), irEdgeISR850, CHANGE);
+  }
+}
+
+// 单路解码完整 40bit 帧
+bool FrameRx::Chan::decode(uint64_t &outBuf) {
+  while (tail != head) {
+    uint32_t t = edgeTime[tail];
+    uint8_t lvl = edgeLevel[tail];
+    tail = (tail + 1) % 128;
+    uint32_t dt = t - lastEdgeUs;
+    lastEdgeUs = t;
+    switch (st) {
+      case S_IDLE:
+        if (lvl == LOW && dt > IR_PREAMBLE_US - IR_PULSE_TOL_US &&
+            dt < IR_PREAMBLE_US + IR_PULSE_TOL_US) st = S_PREAMBLE;
+        break;
+      case S_PREAMBLE:
+        if (lvl == HIGH && dt > IR_PREAMBLE_GAP_US - IR_PULSE_TOL_US &&
+            dt < IR_PREAMBLE_GAP_US + IR_PULSE_TOL_US) {
+          st = S_DATA;
+          bitBuf = 0;
+          bitCnt = 0;
+        } else {
+          st = S_IDLE;
+        }
+        break;
+      case S_DATA:
+        if (lvl == LOW && dt > IR_BIT_HIGH_US - IR_PULSE_TOL_US &&
+            dt < IR_BIT_HIGH_US + IR_PULSE_TOL_US) {
+          st = S_GAP;
+        } else {
+          st = S_IDLE;
+        }
+        break;
+      case S_GAP:
+        if (lvl == HIGH) {
+          bitBuf = (bitBuf << 1) | (dt > IR_GAP_THRESH_US ? 1 : 0);
+          bitCnt++;
+          if (bitCnt >= 40) {
+            st = S_IDLE;
+            bitCnt = 0;
+            outBuf = bitBuf;
+            return true;
+          }
+          st = S_DATA;
+        } else {
+          st = S_IDLE;
+        }
+        break;
+    }
+  }
+  return false;
+}
+
+bool FrameRx::poll(LaserFrame &out, uint64_t *rawOut) {
+  for (uint8_t i = 0; i < 2; i++) {
+    uint64_t buf = 0;
+    if (_ch[i].decode(buf)) {
+      uint8_t b0 = (buf >> 32) & 0xFF;
+      uint8_t b1 = (buf >> 24) & 0xFF;
+      uint8_t b2 = (buf >> 16) & 0xFF;
+      uint8_t b3 = (buf >> 8) & 0xFF;
+      uint8_t chk = buf & 0xFF;
+      if (chk == (uint8_t)~(b0 ^ b1 ^ b2 ^ b3)) {
+        out.playerId = (b0 << 8) | b1;
+        out.weaponId = (b2 >> 4) & 0x0F;
+        out.team = (b2 >> 2) & 0x03;
+        out.shotSeq = b3;
+        out.channel = i;  // 0=38kHz 远距 1=56kHz 近距
+        if (rawOut) *rawOut = buf;
+        return true;
+      }
+    }
+  }
+  return false;
+}

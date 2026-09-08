@@ -37,6 +37,7 @@ water-laser-battle/
 │   ├── gun/               # 水弹枪端固件（ESP32 + SX1262 470M + 双通道红外 + OLED）
 │   ├── helmet/            # 头盔接收器固件（4路双通道红外 + 470M T帧/GPS上报）
 │   ├── target/            # 激光校准靶（5×3 二维阵列 15 路 38k 检测 + 中心解码 + 灯阵/OLED）
+│   ├── calibration-target/# 校准靶板固件（按 PCB/calibration-target.eprj2：15 路 940nm→红/绿，U8 完整解码→蓝闪）
 │   ├── espnow-verify/     # 电流检测板 ESP-NOW 信号验证固件（接收/统计/下行测试）
 │   ├── trigger-board/     # 检测板正式固件（ESP32-C3：INA226 电流识别 + MOSFET 断电 + ESP-NOW）
 │   ├── trigger-board-selftest/  # 检测板(ESP32-C3)硬件自检固件：INA226 电流检测 + ESP-NOW 连接
@@ -111,6 +112,7 @@ pio run -t upload
 | 战绩持久化（JSON 文件） | server: `store.js` |
 | 对局回放（JSONL 事件流） | server: `replay.js` |
 | 激光校准靶（5×3 二维阵列：15 路 38k 光斑检测 + 中心解码 + 灯阵/OLED） | firmware/target |
+| 校准靶板（15 路 940nm 接收 → 对应格红/绿，U8 完整帧解码→蓝闪3次+串口，ESP32-S3，见 PCB 解析报告） | firmware/calibration-target |
 | 户外强光自适应（环境光检测 + 自动升档） | firmware/gun + docs/outdoor-reliability.md |
 | 随机 shotSeq 防作弊（硬件真随机） | firmware/gun: `esp_random()` |
 | 一发一杀（网关唯一判定：跨通道远距 38kHz 优先 + 同通道光强） | firmware/gateway + server |
@@ -133,6 +135,7 @@ pio run -t upload
 - [无改装水弹枪联动方案研究（电流检测扳机 + 断电执行 + ESP-NOW）](docs/trigger-sensor-study.md)
 - [检测板实现说明（trigger-board 固件 + 枪端集成）](docs/trigger-board.md)
 - [检测板正式板 PCB（triger-sensor.eprj2，解析报告）](PCB/triger-sensor-解析报告.md)
+- [校准靶板 PCB（calibration-target.eprj2，接线解析报告）](PCB/calibration-target/calibration-target-解析报告.md)
 - [硬件设计与接线](docs/hardware-design.md)
 - [通信协议规范](docs/protocol.md)
 - [470MHz LoRa 链路协议](docs/protocol-915m.md)
