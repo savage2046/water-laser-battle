@@ -100,3 +100,13 @@ XT30(CN1/CN2 电池/motor 回路) → +11.1V
 - 修正记录：CN1/CN2 接地、U1 电源引脚并联、2.2kΩ 上拉补位号、
   固件 `PIN_SDA 17/PIN_SCL 18`、`SHUNT_MOHM 2`（2mΩ）、INA226 Config=0x06C7
 - 备份：`PCB/triger-sensor-current-test_backup/*.epro2`（git 历史保留）
+
+## 3. EDA 文件离线读取工具（vendored）
+
+- `.epro2`（ZIP + `.epru` 文本记录流）离线解析与格式规范：
+  `tools/vendor/easyeda-agent-skills/`（eggfly/easyeda-agent-skills，MIT），
+  用法见 `tools/vendor/easyeda-agent-skills/README-本地使用.md`；
+  对 `triger-sensor_2026-09-05-11-21.epro2` 实测可解析 29 元件/56 线/54 符号。
+- `.eprj2`（SQLite）与历史脚本：见 `tools/`（`read_eprj2_plain.py`、`dump_epru.py`、`netlist.py`…）。
+- 嘉立创 **官方 API/技能**（在线操作运行中 EDA）与官方 `format/` 规范：
+  `tools/vendor/easyeda-api-skill/`，接入手册 `docs/easyeda-official-api.md`。

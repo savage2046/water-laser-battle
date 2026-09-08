@@ -46,6 +46,18 @@ water-laser-battle/
 └── tools/simulate.js      # 无硬件模拟器（模拟多网关 + 虚拟设备）
 ```
 
+## EDA/PCB 数据技能与工具索引（供 AI 会话调用）
+
+读取/操作嘉立创 EDA（专业版）数据的可复用能力已沉淀到 `skills/`：
+
+- `skills/README.md` — 索引 + 本机环境事实（沙箱/提权/权限补丁位置）
+- `skills/eda-offline-reader/SKILL.md` — 离线解析 `.eprj2`/`.epro2`/`.epru`（元件/引脚/网表/BOM）
+- `skills/eda-official-api/SKILL.md` — 在线调用嘉立创官方 `eda.*` API（需 EDA 运行 + Bridge）
+
+配套 vendored 工具：`tools/vendor/easyeda-agent-skills/`（社区解析器）、
+`tools/vendor/easyeda-api-skill/`（官方技能包：API 参考 + 格式规范 + Bridge）。
+板卡清单见 `PCB/README.md`，官方 API 接入手册见 `docs/easyeda-official-api.md`。
+
 ## 快速开始
 
 ### 1. 启动服务器（需要 Node.js ≥ 18）
