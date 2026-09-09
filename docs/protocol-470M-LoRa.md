@@ -24,8 +24,8 @@ LoRa 带宽有限（470.0MHz、125kHz、SF8 时约 3.1kbps 有效载荷），因
 | 帧 | 格式 | 示例 | 说明 |
 | --- | --- | --- | --- |
 | 注册 | `J<devIdx>,<devId>,<name>` | `J5,G0005,玩家E` | 开机/掉线重连时发送；无 seq |
-| 被打中 | `H<devIdx>,<seq>,<shooter>,<weapon>,<shotSeq>,<channel>,<hp>` | `H5,42,7,2,180,0,30` | `shooter`=射手 ID；`weapon`=武器；`shotSeq`=射击序号（一发一杀去重）；`channel`=命中通道 **0=940nm 1=850nm**（940 击杀优先）；`hp`=剩余血量 |
-| 阵亡 | `D<devIdx>,<seq>,<killer>,<shotSeq>,<channel>,<energy>` | `D5,43,7,180,0,200` | 本地血量归零时发送；`channel`=命中通道（0=940 1=850）；`energy`=光强度（双帧窗口 200=强 100=弱）。仲裁：跨波段 940 优先，**同波段光强高者优先** |
+| 被打中 | `H<devIdx>,<seq>,<shooter>,<weapon>,<shotSeq>,<channel>,<hp>` | `H5,42,7,2,180,0,30` | `shooter`=射手 ID；`weapon`=武器；`shotSeq`=射击序号（一发一杀去重）；`channel`=命中通道 **0=远距 38kHz 1=近距 56kHz**（波长统一 940nm，远距击杀优先）；`hp`=剩余血量 |
+| 阵亡 | `D<devIdx>,<seq>,<killer>,<shotSeq>,<channel>,<energy>` | `D5,43,7,180,0,200` | 本地血量归零时发送；`channel`=命中通道（0=远距 38k 1=近距 56k）；`energy`=光强度（双帧窗口 200=强 100=弱）。仲裁：跨通道远距（38kHz）优先，**同通道光强高者优先** |
 | 开火 | `F<devIdx>,<seq>` | `F5,44` | 开火统计（可选） |
 | 心跳 | `B<devIdx>,<seq>` | `B5,45` | 每 10s；同时用于网关/服务器判断设备在线 |
 | 夺旗 | `C<devIdx>,<seq>` | `C5,46` | ctf 模式触碰旗点/夺旗按键触发 |
@@ -46,13 +46,13 @@ LoRa 带宽有限（470.0MHz、125kHz、SF8 时约 3.1kbps 有效载荷），因
 
 | 帧 | 格式 | 示例 | 说明 |
 | --- | --- | --- | --- |
-| 欢迎/规则 | `@<idx>:W<playerId>,<mode>,<hp>,<dmg>,<ammo>,<reloadMs>,<respawnMs>,<team>,<friends>,<scoreToWin>[,<powerLevel>]` | `@3:W3,tdm,100,10,120,2000,3000,0,3;5;9,50,1` | `friends` 用 `;` 分隔的友军 ID 列表；**无友军（ffa）时用 `-` 占位**；`team`=-1 表示无队伍；`powerLevel`=激光作用范围档位（**0..3**：0近 1标准 2远 3极限；两通道独立映射，850nm 由 2 位 GPIO 选 4 档电流，见 hardware-design §6.5；可选，默认 1） |
+| 欢迎/规则 | `@<idx>:W<playerId>,<mode>,<hp>,<dmg>,<ammo>,<reloadMs>,<respawnMs>,<team>,<friends>,<scoreToWin>[,<powerLevel>]` | `@3:W3,tdm,100,10,120,2000,3000,0,3;5;9,50,1` | `friends` 用 `;` 分隔的友军 ID 列表；**无友军（ffa）时用 `-` 占位**；`team`=-1 表示无队伍；`powerLevel`=激光作用范围档位（**0..3**：0近 1标准 2远 3极限；两通道独立映射，近距通道（56kHz/940nm）由 2 位 GPIO（IR_PWR_850_* 历史命名）选 4 档电流，见 hardware-design §6.5；可选，默认 1） |
 | 重生 | `@<idx>:R` | `@3:R` | 阵亡玩家复活（幂等） |
 | 对局开始 | `@<idx>:S<mode>` | `@3:Stdm` | 复位血量弹药、解锁扳机 |
 | 对局结束 | `@<idx>:E<winner>` | `@3:E0` | 锁扳机等待下一局；`winner`=-1 平局 |
 | 暂停 | `@<idx>:P` | `@3:P` | 锁扳机（幂等） |
 | 恢复 | `@<idx>:Q` | `@3:Q` | 解锁扳机（幂等） |
-| 外部命中 | `@<idx>:X<shooter>,<weapon>,<shotSeq>,<channel>` | `@3:X7,2,180,0` | 服务器转发的头盔命中：本枪被射手 7 命中（本地扣血）；含通道供 940 优先 |
+| 外部命中 | `@<idx>:X<shooter>,<weapon>,<shotSeq>,<channel>` | `@3:X7,2,180,0` | 服务器转发的头盔命中：本枪被射手 7 命中（本地扣血）；含通道供远距（38kHz）优先 |
 | 生命同步 | `@<idx>:V<playerId>,<hp>,<alive>` | `@3:V3,75,1` | 主人玩家 ID + 生命状态同步（发给头盔/枪）：开局/命中/重生/结束时下发，两设备据此确认同一玩家 |
 
 下行帧无 seq：重复接收对枪状态机幂等，无需去重。
