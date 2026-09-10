@@ -15,23 +15,29 @@ static unsigned long g_lastLedToggle = 0;
 static bool g_ledOn = false;
 
 // ===== 射频槽位表（开机自检用）=====
-// 每槽 { NSS, BUSY, RST }；SPI 总线共享（SCLK/MOSI/MISO 见 config.h SX_SCLK 等）。
+// 每槽 { NSS, BUSY, RST }；SPI 总线共享（SCLK/MOSI/MISO 见 config.h PIN_SX_*）。
+// 每槽 { NSS, BUSY, RST, DIO1 }；SPI 总线共享（SCLK/MOSI/MISO 见 config.h PIN_SX_*）。
+// ⚠️ DIO1 是**每射频独享**的中断脚，多射频板没有这个引脚预算（N 个射频要 N 根线）
+//    → 除了第一个/唯一一个射频用 PIN_SX_DIO1（枪端/首板 = G04），其余一律填 -1。
+//    TdmaMac 的收发已改为**轮询 IRQ 寄存器**（不依赖 DIO1，见
+//    docs/lora-gateway-test.md §4.1），所以 -1 也不影响功能；接上的那一路可以用来
+//    跑 RadioLib 阻塞式 API（transmit/receive）或做精确到达时刻。
 // 0xFF = 槽位未定义/未装（自检跳过）。T1 单射频：只填槽 0（沿用原 PIN_SX_*）。
 // T3 多射频板：按实际 PCB 填写全部槽位；没装满时其余槽留 0xFF 即可。
 // 注意：用 int16_t（int8_t 存 0xFF 会窄化为 -1，无法与 0xFF 比较）。
-static const int16_t kRfSlots[GW_RF_SLOTS][3] = {
-    { 5, 17, 16 },  // 槽 0（T1 单射频：NSS=5, BUSY=17, RST=16）
-    { 0xFF, 0xFF, 0xFF },  // 槽 1（示例未用；T3 填实际引脚）
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
+static const int16_t kRfSlots[GW_RF_SLOTS][4] = {
+    { 5, 17, 16, PIN_SX_DIO1 },  // 槽 0（T1 单射频：NSS=5, BUSY=17, RST=16, DIO1=G4）
+    { 0xFF, 0xFF, 0xFF, 0xFF },  // 槽 1（示例未用；T3 填实际引脚，DIO1 填 -1）
+    { 0xFF, 0xFF, 0xFF, 0xFF },
+    { 0xFF, 0xFF, 0xFF, 0xFF },
+    { 0xFF, 0xFF, 0xFF, 0xFF },
+    { 0xFF, 0xFF, 0xFF, 0xFF },
+    { 0xFF, 0xFF, 0xFF, 0xFF },
+    { 0xFF, 0xFF, 0xFF, 0xFF },
+    { 0xFF, 0xFF, 0xFF, 0xFF },
+    { 0xFF, 0xFF, 0xFF, 0xFF },
+    { 0xFF, 0xFF, 0xFF, 0xFF },
+    { 0xFF, 0xFF, 0xFF, 0xFF },
 };
 
 // ===== 检测到的射频（每射频 = RadioLink + TdmaMac）=====
@@ -40,6 +46,7 @@ struct RfUnit {
   TdmaMac mac;       // 每个射频一个 MAC（运行于独立任务）
   uint8_t nss = 0xFF, busy = 0xFF;
   int8_t rst = -1;
+  int8_t dio1 = -1;          // SX1268 DIO1（槽 0 = PIN_SX_DIO1/G04；其余 -1）
   float freqMhz = 0;
   uint8_t gridIdx = 0;   // 标准栅格索引（TF_ASSIGN 告知设备，设备据此跳频）
   bool ok = false;
@@ -171,7 +178,7 @@ static FreqQual g_freqQual[TDMA_STD_CHANNELS];
 // 用射频 0 逐个测量标准栅格各频点信道质量：
 // RX 模式采样 GW_FREQ_QUAL_SAMPLES 次 RSSI → 均值/峰值。
 // 均值高 = 噪声底偏高；峰值高 = 该频点有信号活动（被占用/干扰）。
-static void measureFreqs(SX1262 *r) {
+static void measureFreqs(SX126x *r) {
   r->standby();
   for (uint8_t k = 0; k < TDMA_STD_CHANNELS; k++) {
     float f = TDMA_STD_BASE_MHZ + (float)k * TDMA_STD_STEP_MHZ;
@@ -252,7 +259,10 @@ static void mcastSend(const char *kind, uint8_t idx, uint16_t seq,
   char buf[100];
   snprintf(buf, sizeof(buf), "WLB1,%s,%s,%u,%u,%u,%u", GATEWAY_ID, kind,
            idx, seq, p1, p2);
-  udp.beginPacketMulticast(MCAST_IP, MCAST_PORT, WiFi.localIP());
+  // ESP32 core 2.0.x 的 WiFiUDP 没有 beginPacketMulticast：
+  //   接收组播用 beginMulticast()（setup 里已调用）
+  //   发送组播直接用 beginPacket(组播地址, 端口)（TTL 默认 1，局限在本网段）
+  udp.beginPacket(MCAST_IP, MCAST_PORT);
   udp.print(buf);
   udp.endPacket();
 }
@@ -672,7 +682,7 @@ void setup() {
   pinMode(PIN_STATUS_LED, OUTPUT);
 
   // ===== 开机自检：标准栅格 + 槽位探测 + 频率自动分配 =====
-  SPI.begin(SX_SCLK, SX_MISO, SX_MOSI, SX_NSS);
+  SPI.begin(PIN_SX_SCLK, PIN_SX_MISO, PIN_SX_MOSI, PIN_SX_NSS);
   for (int k = 0; k < TDMA_STD_CHANNELS; k++) {
     g_stdChannels[k] = TDMA_STD_BASE_MHZ + (float)k * TDMA_STD_STEP_MHZ;
   }
@@ -688,6 +698,17 @@ void setup() {
   }
   Serial.printf("[self-test] %u/%u SX1262 slots present\n", m, GW_RF_SLOTS);
 
+  // DIO1（中断线）逐槽报告：接了的槽位 != -1，便于上板确认 G04 有没有生效
+  for (uint8_t i = 0; i < GW_RF_SLOTS; i++) {
+    if (kRfSlots[i][0] == 0xFF) continue;
+    if (kRfSlots[i][3] >= 0) {
+      Serial.printf("[self-test] slot %u DIO1 = GPIO%d（已接线）\n", i,
+                    (int)kRfSlots[i][3]);
+    } else {
+      Serial.printf("[self-test] slot %u DIO1 未接（收发走轮询 IRQ 寄存器）\n", i);
+    }
+  }
+
   // 2) 先以临时频点（470.0）初始化全部检测到的射频（供信道质量测量）
   g_rfCount = 0;
   for (uint8_t j = 0; j < m; j++) {
@@ -696,9 +717,11 @@ void setup() {
     u.nss = (uint8_t)kRfSlots[i][0];
     u.busy = (uint8_t)kRfSlots[i][1];
     u.rst = kRfSlots[i][2];
+    u.dio1 = (int8_t)kRfSlots[i][3];
     u.freqMhz = TDMA_STD_BASE_MHZ;  // 临时频点，测量后重新分配
     u.gridIdx = 0;
-    u.link = RadioLink(u.nss, u.rst, u.busy, -1);  // DIO1 不接（轮询模式）
+    // DIO1：槽 0 = PIN_SX_DIO1（G04，已接线）；其余 -1（多射频没有 DIO1 引脚预算）
+    u.link = RadioLink(u.nss, u.rst, u.busy, u.dio1);
     if (!u.link.begin(u.freqMhz)) continue;
     u.ok = true;
     g_rfCount++;
