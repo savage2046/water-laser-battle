@@ -332,8 +332,16 @@ static void lightUpdate() {
 #endif
 }
 
+static void printSerialReport();   // 定义在 setup() 之后
+
 void setup() {
   Serial.begin(115200);
+  // ⚠️ ESP32-S3 + ARDUINO_USB_CDC_ON_BOOT=1：**主机（串口监视器）接入之前的所有打印
+  //    都会被丢进虚空** —— 表现就是"刷完固件打开监视器什么都没有"。
+  //    所以：① 开机最多等主机 2.5s（没主机也不卡死，可电池单供）
+  //          ② loop 里检测到主机接入时补打一次报告
+  //          ③ 每 5s 打一行心跳（任何时候打开监视器，5s 内必见输出）
+  for (uint32_t t = millis(); !Serial && (millis() - t) < 2500;) delay(20);
   pinMode(PIN_TRIGGER, INPUT_PULLUP);
   pinMode(PIN_MOTOR, OUTPUT);
   digitalWrite(PIN_MOTOR, LOW);
@@ -377,9 +385,34 @@ void setup() {
 
   Serial.println("[gun] boot, waiting for TDMA beacon + assign");
   logBuf.log("B,0");  // 开机日志（相对秒 0）
+  printSerialReport();
+}
+
+// ===== 串口状态报告（USB-CDC 下"开机打印丢失"的解药）=====
+// 调用于：开机结束、主机后接入、以及每 5s 心跳
+static void printSerialReport() {
+  Serial.printf("[gun] t=%lus radio=%s TDMA=%s%s ch=%u slot=%u devs=%u "
+                "hp=%d/%d ammo=%d/%d alive=%d reg=%s\n",
+                (unsigned long)(millis() / 1000), radio.isReady() ? "OK" : "FAIL",
+                tdma.started() ? "run" : "stop", tdma.locked() ? "+locked" : "",
+                (unsigned)tdma.channelIdx(), (unsigned)tdma.slotIdx(),
+                (unsigned)tdma.activeCount(), gun.hp(), gun.maxHp(), gun.ammo(),
+                gun.maxAmmo(), gun.isAlive() ? 1 : 0, g_registered ? "yes" : "no");
 }
 
 void loop() {
+  // 0) 串口：主机后接入 → 补打报告；否则每 5s 一行心跳
+  //    （USB-CDC 下开机打印会丢，这两条保证"任何时候打开监视器都看得到东西"）
+  static bool hostSeen = false;
+  static uint32_t lastHbLog = 0;
+  if (!hostSeen && (bool)Serial) {
+    hostSeen = true;
+    printSerialReport();
+  } else if ((uint32_t)(millis() - lastHbLog) >= 5000) {
+    lastHbLog = millis();
+    if ((bool)Serial) printSerialReport();
+  }
+
   // 1) 已分配但未收到 welcome：每 5s 走自身时隙重发 J（触发服务器重发 W）
   if (tdma.assigned() && !g_registered &&
       millis() - g_lastJoin > REJOIN_MS) {

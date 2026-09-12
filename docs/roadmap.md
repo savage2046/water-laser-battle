@@ -40,17 +40,18 @@
 | [docs/architecture.md](docs/architecture.md) / [README.md](README.md) | 决策表 + 链接同步 |
 
 ### 0.4 未验证事项（下一步优先）
-<<<<<<< HEAD
-1. **编译**：本会话终端环境故障（pwsh 0xC0000142）无法 `pio run` —— **接续第一步先编译三端固件**，修复可能的编译错误
-=======
 1. **编译**：~~终端环境故障无法 `pio run`~~ → **2026-09-10 已完成并修完编译错误**：
    - ✅ `gun`（RAM 18.1% / Flash 23.6%）、`gun-selftest`、`lora-gwtest`、`gateway` **全部编译通过**
    - `gateway` 曾因 5 处历史遗留编译不过：`setSPI()`（RadioLib 6.x 已删）、`SX_SCLK/SX_MISO/SX_MOSI/SX_NSS`
      宏名错（应为 `PIN_SX_*`）、`setPacketMode()` 无参调用已删、`udp.beginPacketMulticast()` 不存在（→`beginPacket`）
    - `gateway` 槽位表由 `{NSS,BUSY,RST}` 扩为 `{NSS,BUSY,RST,DIO1}`：**槽 0 用 `PIN_SX_DIO1`（G04，已接线）**，
      其余槽位 DIO1 填 `-1`（多射频板没有每射频一根 DIO1 的引脚预算）；开机自检逐槽打印 DIO1 配置
-   - ⚠️ **`helmet` 仍编译不过**（3 处，与本批改动无关）：`MotionSensor.cpp` 的 `motionISR` 先 `extern` 后 `static`；
-     `LedStrip.cpp` 的 FastLED `addLeds` 模板参数与已装版本不匹配；`RadioLink.cpp` 同款 `SX_SCLK` 命名错
+   - ✅ **`helmet` 也编译通过了**（2026-09-12 修完 5 处）：`RadioLink` 用 `SX1262` 类（应 `SX1268`，
+     否则必 `-2 CHIP_NOT_FOUND`）、引脚宏 `SX_*`→`PIN_SX_*`、`setSPI()`/`setPacketMode()` 两处
+     RadioLib 6.x 已删接口、`poll()` 先 `readData` 后 `getPacketLength`（同 §4.6）、
+     `MotionSensor.cpp` 的 `motionISR` `extern`/`static` 冲突、`LedStrip.cpp` 的 FastLED
+     `addLeds` 把类型当成了引脚模板参数（数据脚必须是编译期常量）→ 改 `addLeds<WS2812B, PIN_LED, GRB>`。
+     并同样加了 `selfCheck()`。编译结果 RAM 10.7% / Flash 28.2%（`esp32dev`）
    - 顺带修掉 4 处**会导致 TDMA 跑不起来**的逻辑问题（详见 `docs/lora-gateway-test.md` §4）：
      阻塞 `transmit()` 白等 46ms（`TdmaMac::txFrame` 改轮询 IRQ）、注册窗裕量不足（2000µs→6000µs）、
      超帧周期误差累积（改恒定周期 + 实际信标起点为相位基准）、`readData()`/`getPacketLength()` 顺序
@@ -58,10 +59,31 @@
      SX1262 类只认 `"SX1261"`；三端此前用 `SX1262` 类 → 上板首测 `begin=-2 CHIP_NOT_FOUND`
      （**不是焊接问题**）。现 `gun`/`gateway` 改 `SX1268`；`TdmaMac` 用基类 `SX126x*`；
      测试固件自动试 SX1262/SX1268/LLCC68 并打印命中的类。详见 `docs/lora-gateway-test.md` §4.0
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
 2. **烧录实测**：注册收敛时间、时延随 N 变化（示波器/日志打点）、1km 丢包率（前导 4/6/8 三档）、多设备并发开机注册碰撞、网关信道质量检测阈值校准（-95/-85dBm 为经验值）
 3. **任务栈实测**：`uxTaskGetStackHighWaterMark` 校准 `TDMA_TASK_STACK_WORDS`（单射频 4096 字假设）
 4. **时隙命中率**：多射频错峰后 ≥99% 目标；RX 盲区（连续 RX 只在窗口首武装）已处理，需实测确认
+
+### 0.4.1 【2026-09-12】LoRa 链路已打通（实测）
+
+> 完整记录：[docs/lora-联调记录-2026-09-12.md](docs/lora-联调记录-2026-09-12.md)
+
+- ✅ **470MHz LoRa 空口实测通过**：两块板互发互收 **19/19 收全、0 CRC 错、0 包头错**，
+  `air=8.0xms`（理论 8.00ms，SF7/BW500k/CR4-5/前导4），`rssi=−31dBm / snr=12~13.5dB`。
+- 方法：四步固件 `wire-probe`（连线）→ `spi-read`（读寄存器）→ `lora-tx` / `lora-rx`（收发 + PER）。
+- **根因（自研 SPI 驱动的三条必发命令，RadioLib 会自动发）**：
+  ① `SetDio2AsRfSwitchCtrl 9D 01`（否则发射无辐射 / RSSI 卡死不变）
+  ② `SetDioIrqParams 08 …`（否则 `GetIrqStatus` 恒 0，收不到任何 IRQ）
+  ③ `SetPaConfig 95` + `SetTxParams 8E`（否则只有默认低功率档）。
+  另：SPI 读寄存器**数据从第 4 字节起**（命令/地址后有 1 个 Status 字节）。详见
+  `docs/lora-gateway-test.md` §4.7。
+- ✅ **仓库编译问题清零**：12 个文件的 git 冲突标记（已提交进 HEAD）按 `a6cdf1e` 解决；
+  `helmet` 5 处编译错误修完 → **十份固件全部编译通过**。
+- ✅ **网关端换 ESP32-S3 并与枪端统一接线**（`G16/42/15/41/46/45/4`；
+  原 MISO=G19 在 S3 上是 USB D- 会冲突）→ 见 §4.8。
+- ✅ **正式固件"刷完没串口输出"已修**（ESP32-S3 USB-CDC 丢弃开机打印）：
+  加"开机等主机 2.5s + 主机接入补打 + 每 5s 心跳"，网关 FATAL 分支不再静默死循环 → 见 §4.9。
+- ⏭ **下一步**：正式固件 `gateway` + `gun` 的 TDMA 联调（扫频→JOIN→ASSIGN→时隙）、
+  距离/PER 曲线（底噪偏高约 20dB，需用 `lora-rx` 的 `n` 扫频判断来源）。
 
 ### 0.5 下一步路线（roadmap §4 已挂账）
 - T3b：多信道网关硬件（12×SX1262 板，槽位表 kRfSlots 填实际引脚；**主控建议 ESP32-S3**，RAM/GPIO 是真瓶颈）

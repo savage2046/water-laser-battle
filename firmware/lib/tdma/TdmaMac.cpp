@@ -10,8 +10,6 @@ static const uint32_t T_REG  = 10000;  // 注册时隙
 static const uint32_t T_AIR  = 9300;   // 10B 帧空口时长估算（前导4/SF7/500k）
 static const uint32_t DEV_TIMEOUT_MS = 30000;  // 设备心跳超时（与 config.h 一致）
 
-<<<<<<< HEAD
-=======
 // ===== 接收窗取包裕量（2026-09-10 修正，见 docs/lora-gateway-test.md §4.2）=====
 // 原实现统一用 +2000µs，但设备 tryJoin 带 0~6ms 随机退避：JOIN 最早 regStart
 // 起发、最晚 regStart+6ms 起发，空口 9.3ms → 最晚 regStart+15.3ms 才收完。
@@ -29,7 +27,6 @@ static const uint32_t T_REG_RX_MARGIN  = 6000;
 // 改为：以**实际信标空口起点**为基准、周期恒定 = 30+10N + T_SF_TAIL。
 static const uint32_t T_SF_TAIL = T_REG_RX_MARGIN + 2000;   // = 7000µs
 
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
 // MAC 任务栈（字）。单射频 4096 足够；多射频（T3 12 射频）须实测降至 2048-3072
 // 或任务合并（见 docs/gateway-capacity.md §4.2/§6）——创建失败会跳过该射频。
 #ifndef TDMA_TASK_STACK_WORDS
@@ -57,11 +54,7 @@ static bool ringPop(TdmaFrame *q, uint8_t cap, volatile uint8_t &head,
 }
 
 // ===== 公共 =====
-<<<<<<< HEAD
-void TdmaMac::begin(Role role, uint8_t devIdx, SX1262 *r,
-=======
 void TdmaMac::begin(Role role, uint8_t devIdx, SX126x *r,
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
                     const float *channels, uint8_t channelCount,
                     uint8_t myChannel, uint8_t maxSlots) {
   _role = role;
@@ -146,19 +139,6 @@ void TdmaMac::waitUntil(int32_t targetUs) {
 }
 
 // 1ms 间隔轮询接收直到 deadline（持续 RX 由硬件保持，不丢包；轮询只负责取出）
-<<<<<<< HEAD
-bool TdmaMac::readPacketPoll(TdmaFrame &out, uint32_t deadlineUs) {
-  uint8_t buf[10];
-  for (;;) {
-    int16_t st = _r->readData(buf, 10);
-    if (st == RADIOLIB_ERR_NONE) {
-      if (_r->getPacketLength() == 10 && tdmaDecode(buf, out)) return true;
-      _r->startReceive();  // 长度不符/校验错：重武装
-    } else if (st != RADIOLIB_ERR_RX_TIMEOUT) {
-      _r->startReceive();
-    }
-    if ((int32_t)(deadlineUs - micros()) <= 0) return false;
-=======
 // 2026-09-10 修正（见 docs/lora-gateway-test.md §4.6）：
 //   ① 先查 IRQ 寄存器再 readData —— RadioLib 6.x 在"无 IRQ 事件"时也会照读缓冲并
 //      返回 RADIOLIB_ERR_NONE，原写法会把上一包重复吐出来；
@@ -180,18 +160,10 @@ bool TdmaMac::readPacketPoll(TdmaFrame &out, uint32_t deadlineUs) {
     } else if ((int32_t)(deadlineUs - micros()) <= 0) {
       return false;
     }
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
     vTaskDelay(1);
   }
 }
 
-<<<<<<< HEAD
-void TdmaMac::txFrame(const TdmaFrame &f) {
-  uint8_t buf[10];
-  tdmaEncode(f, buf);
-  _r->transmit(buf, 10);  // 阻塞 ~9.3ms
-  _r->standby();
-=======
 // 发射一帧（非阻塞起发 + 轮询 IRQ 寄存器等 TX_DONE）。
 // 2026-09-10 修正（见 docs/lora-gateway-test.md §4.1）：原实现用 RadioLib 阻塞
 // transmit()，它靠读 **DIO1 电平**判完成 —— 多射频网关板每个射频只有
@@ -209,7 +181,6 @@ void TdmaMac::txFrame(const TdmaFrame &f) {
     if ((int32_t)(micros() - deadline) > 0) break;
   }
   _r->finishTransmit();                // 清 IRQ + standby
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
 }
 
 void TdmaMac::lockFromBeacon(const TdmaFrame &f, uint32_t rxEndUs) {
@@ -458,10 +429,6 @@ void TdmaMac::runGateway() {
     if (toGo > 5000) vTaskDelay(pdMS_TO_TICKS((toGo - 5000) / 1000));
     waitUntil(_sfStartUs);
   }
-<<<<<<< HEAD
-  uint32_t sfStart = _sfStartUs;
-=======
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
 
   // 1) 信标 TX（含 N 与 mapVer，自适应超帧长度）
   TdmaFrame b;
@@ -472,12 +439,9 @@ void TdmaMac::runGateway() {
   b.payload[2] = (uint8_t)(c >> 8);
   b.payload[3] = (uint8_t)c;
   b.payload[4] = (uint8_t)((_mapVer << 5) | (_n & 0x1F));
-<<<<<<< HEAD
-=======
   // 相位基准：**实际信标空口起点**（设备端 lockFromBeacon 也是以信标空口起点
   // 为准的），不再用本地预定时刻 sfStart —— 这样两端相位天然一致。
   const uint32_t bcStart = micros();
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
   txFrame(b);
 
   // 2) 广播下行窗：信标发完紧接着发 1 帧下行（[9.3, 18.6ms]，早结束
@@ -496,13 +460,8 @@ void TdmaMac::runGateway() {
   // 3) 设备时隙 0..N-1 共听（武装一次后连续 RX，槽间不重武装）
   _r->startReceive();
   for (uint8_t k = 0; k < _n; k++) {
-<<<<<<< HEAD
-    uint32_t sStart = sfStart + T_BE + T_DL + (uint32_t)k * T_SLOT;
-    uint32_t sEnd = sStart + T_SLOT + 2000;  // 取包余量
-=======
     uint32_t sStart = bcStart + T_BE + T_DL + (uint32_t)k * T_SLOT;
     uint32_t sEnd = sStart + T_SLOT + T_SLOT_RX_MARGIN;   // 取包余量
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
     TdmaFrame f;
     if (readPacketPoll(f, sEnd)) {
       onGwUplink(f);
@@ -511,15 +470,9 @@ void TdmaMac::runGateway() {
   }
 
   // 4) 注册时隙（新设备 JOIN / 失配设备补 JOIN）
-<<<<<<< HEAD
-  uint32_t regStart = sfStart + T_BE + T_DL + (uint32_t)_n * T_SLOT;
-  TdmaFrame f;
-  if (readPacketPoll(f, regStart + T_REG + 2000)) {
-=======
   uint32_t regStart = bcStart + T_BE + T_DL + (uint32_t)_n * T_SLOT;
   TdmaFrame f;
   if (readPacketPoll(f, regStart + T_REG + T_REG_RX_MARGIN)) {
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
     onGwUplink(f);
     pushRx(f);
   }
@@ -528,11 +481,7 @@ void TdmaMac::runGateway() {
   // 5) 心跳超时清理 → 触发重排（mapVer 递增）
   expireDevices();
 
-<<<<<<< HEAD
-  _sfStartUs = sfStart + T_BE + T_DL + (uint32_t)_n * T_SLOT + T_REG;
-=======
   // 6) 下一个超帧：以实际信标起点为基准、**周期恒定** = 30+10N + T_SF_TAIL
   //    （不能按标称 30+10N 递推：注册窗会超时，误差逐帧累积 → 设备失锁）
   _sfStartUs = bcStart + T_BE + T_DL + (uint32_t)_n * T_SLOT + T_REG + T_SF_TAIL;
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
 }

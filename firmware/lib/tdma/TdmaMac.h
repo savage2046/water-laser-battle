@@ -31,13 +31,6 @@ class TdmaMac {
   enum Role { ROLE_DEVICE = 0, ROLE_GATEWAY = 1 };
 
   // devIdx: 设备短号 0-255（网关传 0xFF）
-<<<<<<< HEAD
-  // r: RadioLib SX1262 实例（RadioLink::getRadio()）
-  // channels: 信道频率表（MHz，如 {470.0, 471.0, ...}）
-  // channelCount: 信道数；myChannel: 网关固定信道索引（设备=0，扫描决定）
-  // maxSlots: 每信道最大设备时隙（T1=17）
-  void begin(Role role, uint8_t devIdx, SX1262 *r, const float *channels,
-=======
   // r: RadioLib SX126x 实例（RadioLink::getRadio()）。用基类指针 → SX1262/SX1268/
   //    LLCC68 实例都能传。⚠️ 具体类必须与模块匹配：SX1262 类只认版本字符串
   //    "SX1261"、SX1268 类只认 "SX1268"（Ra-01S = SX1268），拿错类 begin() 返回
@@ -46,7 +39,6 @@ class TdmaMac {
   // channelCount: 信道数；myChannel: 网关固定信道索引（设备=0，扫描决定）
   // maxSlots: 每信道最大设备时隙（T1=17）
   void begin(Role role, uint8_t devIdx, SX126x *r, const float *channels,
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
              uint8_t channelCount, uint8_t myChannel, uint8_t maxSlots);
 
   // ---- 设备侧 ----
@@ -93,11 +85,7 @@ class TdmaMac {
 
   Role _role;
   uint8_t _devIdx;
-<<<<<<< HEAD
-  SX1262 *_r = nullptr;
-=======
   SX126x *_r = nullptr;
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
   const float *_channels = nullptr;
   uint8_t _channelCount = 0;
   uint8_t _maxSlots = 0;

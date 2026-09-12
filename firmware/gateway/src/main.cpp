@@ -15,25 +15,6 @@ static unsigned long g_lastLedToggle = 0;
 static bool g_ledOn = false;
 
 // ===== 射频槽位表（开机自检用）=====
-<<<<<<< HEAD
-// 每槽 { NSS, BUSY, RST }；SPI 总线共享（SCLK/MOSI/MISO 见 config.h SX_SCLK 等）。
-// 0xFF = 槽位未定义/未装（自检跳过）。T1 单射频：只填槽 0（沿用原 PIN_SX_*）。
-// T3 多射频板：按实际 PCB 填写全部槽位；没装满时其余槽留 0xFF 即可。
-// 注意：用 int16_t（int8_t 存 0xFF 会窄化为 -1，无法与 0xFF 比较）。
-static const int16_t kRfSlots[GW_RF_SLOTS][3] = {
-    { 5, 17, 16 },  // 槽 0（T1 单射频：NSS=5, BUSY=17, RST=16）
-    { 0xFF, 0xFF, 0xFF },  // 槽 1（示例未用；T3 填实际引脚）
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF },
-=======
 // 每槽 { NSS, BUSY, RST }；SPI 总线共享（SCLK/MOSI/MISO 见 config.h PIN_SX_*）。
 // 每槽 { NSS, BUSY, RST, DIO1 }；SPI 总线共享（SCLK/MOSI/MISO 见 config.h PIN_SX_*）。
 // ⚠️ DIO1 是**每射频独享**的中断脚，多射频板没有这个引脚预算（N 个射频要 N 根线）
@@ -45,7 +26,8 @@ static const int16_t kRfSlots[GW_RF_SLOTS][3] = {
 // T3 多射频板：按实际 PCB 填写全部槽位；没装满时其余槽留 0xFF 即可。
 // 注意：用 int16_t（int8_t 存 0xFF 会窄化为 -1，无法与 0xFF 比较）。
 static const int16_t kRfSlots[GW_RF_SLOTS][4] = {
-    { 5, 17, 16, PIN_SX_DIO1 },  // 槽 0（T1 单射频：NSS=5, BUSY=17, RST=16, DIO1=G4）
+    // 槽 0（T1 单射频）：引脚直接引用 config.h —— 2026-09-12 起网关改用与枪端相同的接线
+    { PIN_SX_NSS, PIN_SX_BUSY, PIN_SX_RST, PIN_SX_DIO1 },
     { 0xFF, 0xFF, 0xFF, 0xFF },  // 槽 1（示例未用；T3 填实际引脚，DIO1 填 -1）
     { 0xFF, 0xFF, 0xFF, 0xFF },
     { 0xFF, 0xFF, 0xFF, 0xFF },
@@ -57,7 +39,6 @@ static const int16_t kRfSlots[GW_RF_SLOTS][4] = {
     { 0xFF, 0xFF, 0xFF, 0xFF },
     { 0xFF, 0xFF, 0xFF, 0xFF },
     { 0xFF, 0xFF, 0xFF, 0xFF },
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
 };
 
 // ===== 检测到的射频（每射频 = RadioLink + TdmaMac）=====
@@ -66,10 +47,7 @@ struct RfUnit {
   TdmaMac mac;       // 每个射频一个 MAC（运行于独立任务）
   uint8_t nss = 0xFF, busy = 0xFF;
   int8_t rst = -1;
-<<<<<<< HEAD
-=======
   int8_t dio1 = -1;          // SX1268 DIO1（槽 0 = PIN_SX_DIO1/G04；其余 -1）
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
   float freqMhz = 0;
   uint8_t gridIdx = 0;   // 标准栅格索引（TF_ASSIGN 告知设备，设备据此跳频）
   bool ok = false;
@@ -201,11 +179,7 @@ static FreqQual g_freqQual[TDMA_STD_CHANNELS];
 // 用射频 0 逐个测量标准栅格各频点信道质量：
 // RX 模式采样 GW_FREQ_QUAL_SAMPLES 次 RSSI → 均值/峰值。
 // 均值高 = 噪声底偏高；峰值高 = 该频点有信号活动（被占用/干扰）。
-<<<<<<< HEAD
-static void measureFreqs(SX1262 *r) {
-=======
 static void measureFreqs(SX126x *r) {
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
   r->standby();
   for (uint8_t k = 0; k < TDMA_STD_CHANNELS; k++) {
     float f = TDMA_STD_BASE_MHZ + (float)k * TDMA_STD_STEP_MHZ;
@@ -286,14 +260,10 @@ static void mcastSend(const char *kind, uint8_t idx, uint16_t seq,
   char buf[100];
   snprintf(buf, sizeof(buf), "WLB1,%s,%s,%u,%u,%u,%u", GATEWAY_ID, kind,
            idx, seq, p1, p2);
-<<<<<<< HEAD
-  udp.beginPacketMulticast(MCAST_IP, MCAST_PORT, WiFi.localIP());
-=======
   // ESP32 core 2.0.x 的 WiFiUDP 没有 beginPacketMulticast：
   //   接收组播用 beginMulticast()（setup 里已调用）
   //   发送组播直接用 beginPacket(组播地址, 端口)（TTL 默认 1，局限在本网段）
   udp.beginPacket(MCAST_IP, MCAST_PORT);
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
   udp.print(buf);
   udp.endPacket();
 }
@@ -708,16 +678,66 @@ void wsEvent(WStype_t type, uint8_t *payload, size_t length) {
   }
 }
 
+// ===== S3 引脚合法性检查（换板后最容易踩的坑，开机就报）=====
+// 返回 true = 该脚在 ESP32-S3 上不可用；why 给出原因。strapping 脚单独给"注意"。
+static bool pinBadS3(int pin, const char **why) {
+  if (pin < 0) return false;
+  if (pin == 19 || pin == 20) { *why = "G19/G20 是 ESP32-S3 的 USB D-/D+"; return true; }
+  if (pin >= 26 && pin <= 32) { *why = "G26~G32 接 SPI Flash"; return true; }
+  if (pin >= 33 && pin <= 37) { *why = "G33~G37 接 Octal PSRAM（R8 模组）"; return true; }
+  return false;
+}
+static bool pinStrapS3(int pin) {
+  return (pin == 0 || pin == 3 || pin == 45 || pin == 46);
+}
+
+// 检查 SPI 总线 4 根 + 每个已定义槽位的 NSS/BUSY/RST/DIO1
+static void checkPinsForS3() {
+  struct { const char *name; int pin; } bus[] = {
+      {"NSS", PIN_SX_NSS},   {"SCLK", PIN_SX_SCLK},
+      {"MOSI", PIN_SX_MOSI}, {"MISO", PIN_SX_MISO}};
+  int bad = 0;
+  for (uint8_t i = 0; i < 4; i++) {
+    const char *why = nullptr;
+    if (pinBadS3(bus[i].pin, &why)) {
+      Serial.printf("[self-test] ❌ 引脚冲突：%s=G%d —— %s\n", bus[i].name,
+                    bus[i].pin, why);
+      bad++;
+    } else if (pinStrapS3(bus[i].pin)) {
+      Serial.printf("[self-test] ⚠ %s=G%d 是 S3 strapping 脚（上电瞬间被采样）\n",
+                    bus[i].name, bus[i].pin);
+    }
+  }
+  for (uint8_t i = 0; i < GW_RF_SLOTS; i++) {
+    if (kRfSlots[i][0] == 0xFF) continue;
+    for (uint8_t k = 0; k < 4; k++) {
+      const char *why = nullptr;
+      if (pinBadS3((int)kRfSlots[i][k], &why)) {
+        Serial.printf("[self-test] ❌ 槽 %u 第 %u 个脚 G%d 冲突 —— %s\n", i, k,
+                      (int)kRfSlots[i][k], why);
+        bad++;
+      }
+    }
+  }
+  if (bad == 0) {
+    Serial.printf("[self-test] pins ok (S3): NSS=G%d SCLK=G%d MOSI=G%d MISO=G%d"
+                  " RST=G%d BUSY=G%d DIO1=G%d\n",
+                  PIN_SX_NSS, PIN_SX_SCLK, PIN_SX_MOSI, PIN_SX_MISO, PIN_SX_RST,
+                  PIN_SX_BUSY, PIN_SX_DIO1);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
+  // ⚠️ ESP32-S3 + ARDUINO_USB_CDC_ON_BOOT=1：**主机（串口监视器）接入之前的所有打印
+  //    都会被丢弃** —— 表现就是"刷完固件打开监视器什么都没有"。
+  //    所以：① 开机最多等主机 2.5s  ② loop 里主机接入时补打报告  ③ 每 5s 一行心跳
+  for (uint32_t t = millis(); !Serial && (millis() - t) < 2500;) delay(20);
   pinMode(PIN_STATUS_LED, OUTPUT);
 
-  // ===== 开机自检：标准栅格 + 槽位探测 + 频率自动分配 =====
-<<<<<<< HEAD
-  SPI.begin(SX_SCLK, SX_MISO, SX_MOSI, SX_NSS);
-=======
+  // ===== 开机自检：引脚合法性 + 标准栅格 + 槽位探测 + 频率自动分配 =====
+  checkPinsForS3();
   SPI.begin(PIN_SX_SCLK, PIN_SX_MISO, PIN_SX_MOSI, PIN_SX_NSS);
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
   for (int k = 0; k < TDMA_STD_CHANNELS; k++) {
     g_stdChannels[k] = TDMA_STD_BASE_MHZ + (float)k * TDMA_STD_STEP_MHZ;
   }
@@ -733,8 +753,6 @@ void setup() {
   }
   Serial.printf("[self-test] %u/%u SX1262 slots present\n", m, GW_RF_SLOTS);
 
-<<<<<<< HEAD
-=======
   // DIO1（中断线）逐槽报告：接了的槽位 != -1，便于上板确认 G04 有没有生效
   for (uint8_t i = 0; i < GW_RF_SLOTS; i++) {
     if (kRfSlots[i][0] == 0xFF) continue;
@@ -746,7 +764,6 @@ void setup() {
     }
   }
 
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
   // 2) 先以临时频点（470.0）初始化全部检测到的射频（供信道质量测量）
   g_rfCount = 0;
   for (uint8_t j = 0; j < m; j++) {
@@ -755,24 +772,26 @@ void setup() {
     u.nss = (uint8_t)kRfSlots[i][0];
     u.busy = (uint8_t)kRfSlots[i][1];
     u.rst = kRfSlots[i][2];
-<<<<<<< HEAD
-    u.freqMhz = TDMA_STD_BASE_MHZ;  // 临时频点，测量后重新分配
-    u.gridIdx = 0;
-    u.link = RadioLink(u.nss, u.rst, u.busy, -1);  // DIO1 不接（轮询模式）
-=======
     u.dio1 = (int8_t)kRfSlots[i][3];
     u.freqMhz = TDMA_STD_BASE_MHZ;  // 临时频点，测量后重新分配
     u.gridIdx = 0;
     // DIO1：槽 0 = PIN_SX_DIO1（G04，已接线）；其余 -1（多射频没有 DIO1 引脚预算）
     u.link = RadioLink(u.nss, u.rst, u.busy, u.dio1);
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
     if (!u.link.begin(u.freqMhz)) continue;
     u.ok = true;
     g_rfCount++;
   }
   if (g_rfCount == 0) {
     Serial.println("[self-test] FATAL: no radio up, abort");
-    while (1) { delay(1000); }
+    // 不要静默死循环：每 2s 把原因打一遍，否则 USB-CDC 下表现为"完全没输出"
+    for (;;) {
+      delay(2000);
+      Serial.printf("[self-test] FATAL: no radio up —— 查 PIN_SX_*(NSS=G%d SCK=G%d "
+                    "MOSI=G%d MISO=G%d RST=G%d BUSY=G%d) / 3.3V 供电 / 模组焊接；"
+                    "本机已检测到 %u 个槽位\n",
+                    PIN_SX_NSS, PIN_SX_SCLK, PIN_SX_MOSI, PIN_SX_MISO, PIN_SX_RST,
+                    PIN_SX_BUSY, (unsigned)m);
+    }
   }
 
   // 3) 信道质量检测：用射频 0 逐个测量标准栅格频点（避开干扰严重的频率）
@@ -819,7 +838,34 @@ void setup() {
   Serial.printf("[gw] %u radios ready, gateway up\n", g_rfCount);
 }
 
+// ===== 串口状态报告（USB-CDC 下"开机打印丢失"的解药）=====
+// 调用于：主机后接入时补打、以及每 5s 心跳 —— 保证任何时候打开监视器都能看到状态
+static void printSerialReport() {
+  Serial.printf("[gw] t=%lus rf=%u ip=%s ws=%s", (unsigned long)(millis() / 1000),
+                (unsigned)g_rfCount, WiFi.localIP().toString().c_str(),
+                g_wsConnected ? "up" : "down");
+  for (uint8_t j = 0; j < g_rfCount; j++) {
+    Serial.printf(" | rf%u %.1fMHz k=%u devs=%u%s", (unsigned)j,
+                  (double)g_rf[j].freqMhz, (unsigned)g_rf[j].gridIdx,
+                  (unsigned)g_rf[j].mac.activeCount(),
+                  g_rf[j].ok ? "" : "(fail)");
+  }
+  Serial.println();
+}
+
 void loop() {
+  // 0) 串口：主机后接入 → 补打报告；否则每 5s 一行心跳
+  //    （USB-CDC 下开机打印会丢，这两条保证"任何时候打开监视器都看得到东西"）
+  static bool hostSeen = false;
+  static uint32_t lastHbLog = 0;
+  if (!hostSeen && (bool)Serial) {
+    hostSeen = true;
+    printSerialReport();
+  } else if ((uint32_t)(millis() - lastHbLog) >= 5000) {
+    lastHbLog = millis();
+    if ((bool)Serial) printSerialReport();
+  }
+
   ws.loop();
 
   mcastPoll();

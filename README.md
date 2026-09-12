@@ -41,12 +41,17 @@ water-laser-battle/
 │   ├── espnow-verify/     # 电流检测板 ESP-NOW 信号验证固件（接收/统计/下行测试）
 │   ├── trigger-board/     # 检测板正式固件（ESP32-C3：INA226 电流识别 + MOSFET 断电 + ESP-NOW）
 │   ├── trigger-board-selftest/  # 检测板(ESP32-C3)硬件自检固件：INA226 电流检测 + ESP-NOW 连接
-<<<<<<< HEAD
-=======
 │   ├── gun-selftest/      # 枪端主控板体检+联调固件（T1 LED/T2 LoRa 在位/T3 ESP-NOW/
 │   │                      #   ★T4 自动连 LoRa 网关 + 每秒心跳 / ★T5 940nm-38kHz 光路矫正发射）
 │   ├── lora-gwtest/       # 枪端 PCB 充当 LoRa 网关的链路测试固件（SCAN/MON/GW/PING/ECHO）
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
+│   ├── wire-probe/        # 最小测试固件：开机后 NSS/SCK/MOSI/RST 分别输出
+│   │                      #   10 / 100 / 500 / 1000 Hz 方波（不用 SPI，无任何库）
+│   ├── lora-tx/           # 第四步（发端）：LoRa 470MHz/SF7/BW500k 定时发测试包
+│   ├── lora-rx/           # 第四步（收端）：连续接收 + RSSI/SNR + 收包打印 + 底噪扫描
+│   ├── spi-read/          # 第二步：用 SPI 读 SX126x 寄存器（0x0740 同步字 / 版本串 /
+│   │                      #   RxGain / trim / 错误标志）并输出到串口
+│   ├── spi-probe/         # SPI 接口测试：极简单帧发送、NSS 下降沿可触发、
+│   │                      #   纯 ASCII 输出；含位翻转对照
 │   └── gateway/           # 基地台网关固件（470M⇄WebSocket 桥接 + 开机自检/多射频）
 ├── server/                # Node.js 对战服务器 + Web 控制台
 └── tools/simulate.js      # 无硬件模拟器（模拟多网关 + 虚拟设备）
@@ -154,11 +159,13 @@ pio run -t upload
 - [检测板实现说明（trigger-board 固件 + 枪端集成）](docs/trigger-board.md)
 - [检测板正式板 PCB（triger-sensor.eprj2，解析报告）](PCB/triger-sensor-解析报告.md)
 - [校准靶板 PCB（calibration-target.eprj2，接线解析报告）](PCB/calibration-target/calibration-target-解析报告.md)
-<<<<<<< HEAD
-=======
 - [枪端自检固件联调记录（gun-selftest T1~T5）](docs/gun-selftest-联调记录.md)
 - [LoRa 网关链路测试（枪端 PCB 充当路由/网关 + 发现的正式固件隐患）](docs/lora-gateway-test.md)
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
+- [**最小测试固件 wire-probe**（NSS/SCK/MOSI/RST = 10/100/500/1000 Hz 方波）](firmware/wire-probe/README.md)
+- [**SPI 读寄存器固件 spi-read**（读 0x0740 同步字/版本串/RxGain，输出到串口）](firmware/spi-read/README.md)
+- [**LoRa 收发测试固件**：发端 `lora-tx` / 收端 `lora-rx`（470MHz/SF7/BW500k；收端打印 RSSI/SNR/数据 + 底噪扫描）](firmware/lora-rx/README.md)
+- [**LoRa 链路排查记录（2026-09-12，链路已打通 19/19）**](docs/lora-联调记录-2026-09-12.md)
+- [**SPI 接口测试固件 spi-probe**（示波器触发式单帧发送 + 波形→结论判据表）](firmware/spi-probe/README.md)
 - [硬件设计与接线](docs/hardware-design.md)
 - [通信协议规范](docs/protocol.md)
 - [470MHz LoRa 链路协议](docs/protocol-915m.md)

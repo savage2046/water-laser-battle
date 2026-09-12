@@ -11,11 +11,6 @@
 //   ✅=原理图已连线（图确认）；🆕=空脚建议分配（待按映射表布线）
 // S3 约束：GPIO26-32=Flash、33-37=Octal PSRAM、19/20=USB、0/3/45/46=strapping。
 // ⚠️ GPIO45/46 用于 SX BUSY/RST 是原理图确认连法（立创板排针引出，可用）；上电时序无碍。
-<<<<<<< HEAD
-#define PIN_IR_TX 13             // ✅ 940nm 远距 OOK →GPIO13（主控页 $1N92→220Ω→Q4 栅，H2 接 LED）
-#define PIN_IR_TX_850 47         // ✅ 近距 940nm/56kHz OOK（主控页网络 '850nm'=G47→200Ω→Q1 栅）
-#define PIN_IR_RX 4              // 🆕 远距接收 38kHz IRM：XL-IRM-V838M3/TR（C51900936；空闲高，中断）
-=======
 // 🆕 2026-09-10 改线：SX1268 的 DIO1 → G04（原 G04 的 IR_RX 迁到 G14，940 功率档置 0xFF）。
 //    DIO1 接上后 RadioLib 的阻塞 transmit() 恢复正常（~9.3ms，而不是白等 46ms）——
 //    这也是 docs/lora-gateway-test.md §4.1 那个隐患的硬件级解法。
@@ -24,7 +19,6 @@
 #define PIN_IR_RX 14             // 🆕 远距接收 38kHz IRM：XL-IRM-V838M3/TR（C51900936；空闲高，中断）
                                  //    ⚠️ 2026-09-10 由 G04 迁到 G14：G04 让给 SX1268 的 DIO1
                                  //    （G14 原规划的 940 功率档为单档硬件、不需要 → 见 PIN_IR_POWER）
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
 #define PIN_IR_RX_850 5          // 🆕 近距 56kHz IRM 预留（56k 暂缓；空闲高，中断；历史命名 _850）
 #define PIN_TRIGGER 6            // ✅ 扳机微开关（主控页 G06 悬空 stub 即此；上拉，按下接地）
 #define PIN_MOTOR 7              // 🆕 水弹波箱电机 MOSFET 栅极（G07 空脚）
@@ -42,14 +36,10 @@
 #define PIN_SX_MISO 41           // ✅ MISO=G41
 #define PIN_SX_RST 46            // ✅ RaRES=G46（低有效复位）
 #define PIN_SX_BUSY 45           // ✅ RaBUSY=G45（忙指示）
-<<<<<<< HEAD
-#define PIN_SX_DIO1 (-1)         // DIO1 不接（RadioLib 轮询模式；Module 传 -1）
-=======
 #define PIN_SX_DIO1 4            // ✅ DIO1=G04（2026-09-10 已接线）：SX1268 中断输出
                                  //    → RadioLib 可用阻塞 transmit()/receive() 与中断收包；
                                  //    未接线时传 -1（会白等 5×空口 ≈46ms 才返回 TX_TIMEOUT）
                                  // ⚠️ 同时把 IR_RX 从 G04 迁到 G14（见下方引脚表）
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
 
 #define RADIO_FREQ_MHZ 470.0f    // 470~510MHz 国内合法微功率频段
 #define RADIO_BW_KHZ 500.0f      // 目标：SF7/500k（21.9kbps，见 docs/wireless-research.md）
@@ -103,12 +93,8 @@
 
 // ===== 作用范围：功率档位与双帧 =====
 // ✅ 主控页近距档位：Q2 栅=G39、Q3 栅=G38（网络 850nm-2/-3），基础支路 R182=82Ω 常通
-<<<<<<< HEAD
-#define PIN_IR_POWER 14          // 🆕 远距（940nm）功率档切换（G14 空脚，高=远档）；940 单档硬件可不接→0xFF
-=======
 #define PIN_IR_POWER 0xFF        // 0xFF=不使用：G14 已让给 IR_RX（见上）；940 通道为 R447=47Ω
                                  // 单档硬件，本就不需要功率档切换（LaserCodec 对 0xFF 自动跳过）
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
 #define PIN_IR_PWR_850_A 39      // ✅ 近距功率档 bit0 = G39（Q2 栅；低=该支路断开）
 #define PIN_IR_PWR_850_B 38      // ✅ 近距功率档 bit1 = G38（Q3 栅）
 #define IR_PWR_850_LEVELS 4      // 近距通道档位数（2 或 4，文档/校准用；固件按引脚有效性自动判定）

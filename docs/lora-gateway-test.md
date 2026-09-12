@@ -89,15 +89,27 @@ gun-board **未引出 SX1268 的 DIO1**，所以本固件：
 > | 4.1 阻塞 `transmit()` 白等 46ms | ✅ 已修（两处） | ① gun-board 硬件改线 DIO1→G04（枪端自动恢复）② `TdmaMac::txFrame` 改为**轮询 IRQ 寄存器**（多射频网关没有 DIO1 引脚预算，必须这样） |
 > | 4.2 注册窗裕量 2000µs < 6ms 退避 | ✅ 已修 | `TdmaMac.cpp`：`T_SLOT_RX_MARGIN 1500` / `T_REG_RX_MARGIN 6000` |
 > | 4.3 超帧周期误差累积 | ✅ 已修 | `TdmaMac.cpp`：相位基准改用**实际信标空口起点**、周期恒定 `30+10N + T_SF_TAIL(8ms)` |
-> | 4.4 `gateway` 用了 `setSPI()` 编译不过 | ✅ 已修 | 删掉该行；同时修好该文件另外 4 处历史遗留（`SX_SCLK`→`PIN_SX_SCLK`、`setPacketMode()`、`beginPacketMulticast`）→ `gateway` 现可编译（RAM 19.5% / Flash 76.5%） |
+> | 4.4 `gateway` 用了 `setSPI()` 编译不过 | ✅ 已修 | 删掉该行；同时修好该文件另外 4 处历史遗留（`SX_SCLK`→`PIN_SX_SCLK`、`setPacketMode()`、`beginPacketMulticast`）→ `gateway` 现可编译（**2026-09-12 起按 ESP32-S3 编译：RAM 19.4% / Flash 28.4%**） |
 > | 4.5 底噪测量用错 RSSI 口径 | ⏳ 未改 | 仍是 `getRSSI()`（包 RSSI）；本测试固件的扫频已用 `getRSSI(false)` 做对照 |
 > | 4.6 `readData()` 早于 `getPacketLength()` | ✅ 已修 | `TdmaMac::readPacketPoll` + `gun/RadioLink::poll` + `gateway/RadioLink` 全部改为先查 IRQ、先取长度、显式处理 CRC 错 |
 >
-> 编译验证：`gun` / `gun-selftest` / `lora-gwtest` / `gateway` 四份**全部编译通过**。
-> ⚠️ `helmet` **仍编译不过**（3 处，均与本批改动无关的历史问题：
-> `MotionSensor.cpp` 的 `motionISR` 先 `extern` 后 `static`、`LedStrip.cpp` 的
-> FastLED `addLeds` 模板参数与已装版本不匹配、`RadioLink.cpp` 与网关同款的
-> `SX_SCLK` 命名错误）—— 需要时按同样方式修。
+> 编译验证：`gun` / `gun-selftest` / `lora-gwtest` / `gateway` / **`helmet`** 五份
+> **全部编译通过**（`helmet` 于 2026-09-12 修完，见下）。
+>
+> ✅ **`helmet` 已修（2026-09-12）**，共 5 处：
+>
+> | 文件 | 问题 | 修法 |
+> | --- | --- | --- |
+> | `helmet/src/RadioLink.cpp` | 用 `SX1262` 类（只认版本串 `"SX1261"`）→ 上板必 `-2 CHIP_NOT_FOUND` | 改 `SX1268`（并把 `getRadio()` 返回基类 `SX126x*`，与 gun/gateway/`TdmaMac` 一致） |
+> | 同上 | 引脚宏名写成 `SX_NSS/SX_SCLK/...`（config.h 里是 `PIN_SX_*`） | 全部改 `PIN_SX_*` |
+> | 同上 | `setSPI(&SPI)`：RadioLib 6.x 已移除 | 删掉，靠 `SPI.begin(明确引脚)` |
+> | 同上 | `setPacketMode()` 无参调用：只适用 GFSK，本项目是 LoRa | 删掉（调用会返回 `WRONG_MODEM`） |
+> | `helmet/src/RadioLink.cpp::poll()` | 先 `readData()` 后 `getPacketLength()`、且没先查 IRQ（会把上一包重复吐出来）——同 §4.6 | 与 `gun/RadioLink::poll()` 对齐：先查 IRQ → 先取长度 → `readData` → CRC 错重武装 |
+> | `helmet/src/MotionSensor.cpp` | `motionISR` 被头文件声明为 `friend`（即 `extern`），定义却写成 `static` | 去掉 `static`（并加注释说明原因） |
+> | `helmet/src/LedStrip.cpp` | `FastLED.addLeds<WS2812B, uint8_t, GRB>` 把"类型"当成了引脚模板参数；FastLED 3.10 数据脚必须是**编译期常量** | 改 `addLeds<WS2812B, PIN_LED, GRB>`（固定用 config.h 的 `PIN_LED`，传入的 pin 仅做校验并给出警告） |
+>
+> 同时按 gun/gateway 的方式加了 `selfCheck()`（读版本串/同步字/错误标志/瞬时 RSSI）。
+> 编译结果：RAM 10.7% / Flash 28.2%（`esp32dev`）。
 
 以下 7 项是在读代码 + 编译验证中发现的**真实隐患**（保留原始分析备查；
 本测试固件已全部规避）。
@@ -242,8 +254,83 @@ readData!"*。`firmware/gun/src/RadioLink.cpp::poll()` 顺序相反，取到的�
 `RADIOLIB_ERR_CRC_MISMATCH`**（现有实现把 CRC 错当成"非超时错误"就
 `startReceive()`，其实数据已在缓冲里、可以计数）。
 
-## 5. 与 `TdmaMac` 的差异一览（2026-09-10 后已基本对齐）
+### 4.7 【经验·2026-09-12 实测】自研裸 SPI 驱动必发的三条命令 + 读寄存器偏移
 
+> **结论先说**：这三条 **RadioLib 都会自动发**（call site 见下），所以 `gun`/`gateway`
+> 用 RadioLib 的正式固件**不受影响、无需修改**。但凡是自己写 SPI 时序的（本仓的
+> 测试固件 `lora-tx`/`lora-rx`/`spi-read`，或将来换驱动），**少任何一条都会出现
+> "看起来全对但就是不通"的假象**。以下现象都是在真板子上逐条确认过的。
+
+| # | 命令 | 少了它的现象 | RadioLib 在哪发 |
+| --- | --- | --- | --- |
+| ① | `SetDio2AsRfSwitchCtrl` `9D 01` | 发射 **`TX_DONE` 正常返回但空口上没有辐射**；接收端 RSSI **一个字节都不变地卡死**（看到的是被隔离的前端，不是天线）。原因：Ra-01S 的收发切换靠 **TXEN(脚5)/RXEN(脚11)** 的 RF 开关，本板 U2 只连 6 根线、没有这两个脚，只能由 **DIO2** 驱动（手册表 13-33：RX 时 DIO2=0、TX 时 DIO2=1） | `SX126x::begin()` → `setDio2AsRfSwitch(true)`（SX126x.cpp:192） |
+| ② | `SetDioIrqParams` `08 03 FF 00 00 00 00 00 00` | `GetIrqStatus()` **恒为 `0x0000`**，轮询永远等不到 `TxDone`/`RxDone`（收端表现成"对端在发、本端什么都收不到"）。实测现象很迷惑：`irq=0x0000 air=200ms`（跑满超时），但**状态字节已报 `0x2C`，其中 bit3:1 = 6 = 「Command TX done」** —— 包其实发出去了，只是标志位没被记录。原因：手册 §13.3.2「**默认所有 IRQ 处于被屏蔽状态（全 0）**」 | 每次收发前重设：`startReceiveCommon()` 用 `RX_DONE\|CRC_ERR\|HEADER_ERR`、`startTransmit()` 用 `TX_DONE\|TIMEOUT` |
+| ③ | `SetPaConfig` `95 04 07 00 01` + `SetTxParams` `8E 0F 04` | 不配 = **默认低功率 PA**（+14dBm 档）。高功率档见手册表 13-21：`paDutyCycle=0x04 hpMax=0x07 deviceSel=0x00 paLut=0x01`；本项目功率 +15dBm、ramp 200µs | `begin()` → `setOutputPower(RADIO_TX_POWER_DBM)`（SX1268.cpp：`setPaConfig(0x04, deviceSel=0x00)` + `setTxParams(power, PA_RAMP_200U)`） |
+
+**另外两条读时序结论**（同样实测确认）：
+
+- **返回数据的命令，命令/地址之后先有一个 `Status` 字节，数据在它后面**：
+  `ReadRegister` 的数据从第 **4** 字节起（手册表 13-25 正文："主机必须在发送两字节的
+  地址后发送一个 NOP，然后可以开始进行下一个 NOP 触发的数据接收"）；
+  `GetPacketType` 的 packetType 在第 **2** 字节；`GetDeviceErrors` 的 OpError 在第 **2-3** 字节。
+  按"数据从第 3 字节起"读就会**整体错位一个字节**（现象：每条第 1 个字节恒为 `0xA2`，
+  而版本串内容恰好晚一个字节出现）。RadioLib 取的是 `buffIn[cmdLen + 1]`（Module.cpp:402，
+  其 `widths[STATUS]` 保持默认 `BITS_8`）。
+- 复位后默认 `pktType=FSK`、寄存器为表 12-1 的复位值
+  （`0x0740=0x14` `0x0741=0x24` `0x08AC=0x94` `0x0911=0x05` `0x0912=0x05`），
+  可以用"读到的值是否等于复位值"来验证 SPI 到底读对没有。
+
+**已回流的改动**：`firmware/gun/src/RadioLink.cpp`、`firmware/gateway/src/RadioLink.cpp`
+各加了 `selfCheck()`（开机自动跑，也可重复调用）：读 `0x0320` 版本串 + `0x0740/0x0741`
+同步字 + `GetDeviceErrors` + 瞬时 RSSI，打印一行判据 —— 以后"LoRa 不通"在开机日志里
+就能直接看出是 SPI、芯片错误标志，还是网络同步字的问题。
+
+### 4.8 【2026-09-12】网关端换板与接线统一
+
+- **网关主控由「ESP32 经典款」换成 ESP32-S3**（`platformio.ini`：
+  `board = esp32-s3-devkitc-1` + `ARDUINO_USB_CDC_ON_BOOT=1`），并**改用与枪端完全相同的接线**：
+  `NSS=G16 SCK=G42 MOSI=G15 MISO=G41 RST=G46 BUSY=G45 DIO1=G04`
+  （`gateway/src/config.h` 与 `gun/src/config.h` 的 `PIN_SX_*` 已逐条一致，7/7 核对通过）。
+- 换板时必须避开的 S3 脚：**G19/G20 = USB D-/D+**（原网关的 MISO 正好在 G19 —— 在经典 ESP32 上
+  合法，在 S3 上会与 USB 外设打架，故随本次统一接线一并消除）、G26~G32 = Flash、
+  G33~G37 = Octal PSRAM（R8 模组）、G0/G3/G45/G46 = strapping。
+- `gateway/src/main.cpp` 新增 `checkPinsForS3()`：开机把 SPI 四线 + 槽位表逐脚核一遍，
+  冲突就打印 `❌ 引脚冲突` 并给出原因（strapping 脚只给 ⚠ 提示）。
+- 测试固件（`wire-probe` / `spi-read` / `lora-tx` / `lora-rx` / `spi-probe`）随之**去掉了
+  单独的网关 env**：两块板接线相同，一律烧 `-e gun-s3`。
+
+### 4.9 【2026-09-12】正式固件"刷上去没输出" —— ESP32-S3 USB-CDC 把开机打印丢了
+
+**现象**：测试固件（`lora-tx`/`lora-rx`）串口一切正常，但刷 `gun` / `gateway` 后
+**打开监视器什么都没有**（板子其实在跑）。
+
+**原因**：`platformio.ini` 里 `ARDUINO_USB_CDC_ON_BOOT=1` 时 `Serial` 走**原生 USB-CDC**；
+**主机（串口监视器）打开之前，所有 `Serial.print` 全部被丢弃**。而这两个正式固件的打印
+**只写在 `setup()` 里**，`loop()` 中一行串口都没有 → 开机那几百毫秒的输出正好落在
+"主机还没连上"的窗口里，于是表现为完全没输出。测试固件因为**每秒都在打**，所以看得见。
+
+**修法（两个固件都已落地）**：
+
+| 措施 | 作用 |
+| --- | --- |
+| 开机 `for (t=millis(); !Serial && (millis()-t)<2500;) delay(20);` | 监视器已打开时，开机报告能打出来（无主机时最多等 2.5s，不阻塞电池单供） |
+| `loop()`：`!hostSeen && (bool)Serial` → 补打一次 `printSerialReport()` | 后接入主机也能拿到完整状态 |
+| `loop()`：每 5s 一行 `#hb` 风格状态 | **任何时候打开监视器，5s 内必有输出** |
+| 网关 `g_rfCount==0` 的 FATAL 分支由 `while(1){}` 改成每 2s 打印一次原因 | 不再"静默死循环"，射频没起来时能直接看到要查什么 |
+
+状态行示例：
+
+```
+[gun] t=12s radio=OK TDMA=run+locked ch=0 slot=3 devs=2 hp=100/100 ammo=120/120 alive=1 reg=yes
+[gw]  t=12s rf=1 ip=192.168.1.50 ws=up | rf0 470.0MHz k=0 devs=2
+```
+
+**仍然没输出时的排查顺序**：① 打开监视器后**按板子复位键**（现在开机等主机 2.5s，复位后必见报告）；
+② 确认接的是**原生 USB 口**（S3 上 GPIO19/20 那一路；UART 桥那一路没有 CDC 输出）；
+③ 看状态 LED 有没有在闪（在闪 = 程序在跑，问题只在串口通道）；④ 复位原因/backtrace
+（`CORE_DEBUG_LEVEL=2` 会打出来）——若是 `Brownout`/`TG0WDT` 之类，就是供电或死锁。
+
+## 5. 与 `TdmaMac` 的差异一览（2026-09-10 后已基本对齐）
 §4 的修正落地后，正式 `TdmaMac` 与本测试固件在**影响 TDMA 能否跑通的每一点上
 都一致了**，只剩两处有意保留的差异：
 
@@ -291,6 +378,17 @@ pio device monitor -b 115200      # 串口
 ## 8. 相关文件
 
 - 固件与完整使用文档：`firmware/lora-gwtest/README.md`
+- **链路排查四步固件**（按顺序烧，每步都有硬判据；都是"不依赖 RadioLib"或最小依赖）：
+  1. `firmware/wire-probe/` —— **连线**：`NSS/SCK/MOSI/RST` 分别输出
+     **10 / 100 / 500 / 1000 Hz** 方波（不用 SPI、无任何库），示波器核对焊盘。
+  2. `firmware/spi-read/` —— **读寄存器**：`0x0320` 版本串、`0x0740/0x0741` 同步字、
+     `RxGain`、trim、错误标志；开机先复位，读到的应等于手册表 12-1 的复位值。
+     （`firmware/spi-probe/` 是更早的、面向示波器触发的一版，已被 step 2 取代。）
+  3. `firmware/lora-tx/` —— **发端**：470MHz/SF7/BW500k，定时发 8 字节 `LRTESTnn`，
+     打印 `TX_DONE` 与实测空口时间（理论 8.00ms）。
+  4. `firmware/lora-rx/` —— **收端**：连续接收，打印 `RSSI/SNR/数据`，并按载荷序号
+     算 **PER**；`n` 键可扫 460~480MHz 看底噪。
+     （2026-09-12 实测：两块板 19/19 收全、0 CRC 错、`air=8.0xms`，链路验证通过。）
 - 引脚定稿：`PCB/gun-board/main-board-S3引脚映射.md`
 - 帧协议：`docs/protocol-tdma.md`｜MAC 规范：`docs/tdma-mac.md`
 - 无线方案研究：`docs/wireless-research.md`｜链路预算：`docs/link-budget.md`

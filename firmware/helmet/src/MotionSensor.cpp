@@ -3,7 +3,10 @@
 
 MotionSensor motion;
 
-static void IRAM_ATTR motionISR() { motion._motion = true; }
+// ⚠️ 不能加 static：MotionSensor.h 里已有 `friend void motionISR();`，
+//    那是在命名空间作用域声明的一个非静态函数；再定义成 static 会
+//    "declared 'extern' and later 'static'" 编译报错。
+void IRAM_ATTR motionISR() { motion._motion = true; }
 
 // 软件 I2C 位操作（LIS3DH 只需低频访问：初始化 + 清中断）
 static void i2cStart(uint8_t sda, uint8_t scl) {

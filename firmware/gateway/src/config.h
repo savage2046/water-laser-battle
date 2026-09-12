@@ -14,23 +14,26 @@
 #define SERVER_PORT 3000
 #define WS_PATH "/ws"
 
-// ===== SX1262 470MHz LoRa（SPI 直驱）=====
-#define PIN_SX_NSS 5             // SPI 片选
-#define PIN_SX_SCLK 18           // SPI 时钟
-#define PIN_SX_MOSI 23           // SPI 主机输出
-#define PIN_SX_MISO 19           // SPI 主机输入
-#define PIN_SX_RST 16            // 复位
-#define PIN_SX_BUSY 17           // 忙指示
-<<<<<<< HEAD
-#define PIN_SX_DIO1 4            // 中断（RadioLib 轮询模式可不接）
-=======
+// ===== SX1268 470MHz LoRa（SPI 直驱）=====
+// ⚠️ 2026-09-12 网关板由「ESP32 经典款」换成 **ESP32-S3**，并**改用与枪端主板完全相同的接线**
+//    （见 firmware/gun/src/config.h）→ 本文件引脚与枪端逐项一致：
+//      NSS=G16  SCLK=G42  MOSI=G15  MISO=G41  RST=G46  BUSY=G45  DIO1=G04
+//    这样两端的板子/线束完全一样，烧同一个测试固件（gun-s3 env）就能互通。
+//    S3 约束核对：G41/G42 = JTAG（可用，接外部调试器时才冲突）、G45/G46 = strapping 脚
+//    （上电瞬间被采样，本板实测无碍，见 PCB 引脚映射表）、G26~G32 Flash / G33~G37 PSRAM /
+//    G19/G20 USB —— 均未占用。开机自检会再核一遍（gateway/main.cpp 的 checkPinsForS3）。
+#define PIN_SX_NSS 16            // SPI 片选（与枪端一致）
+#define PIN_SX_SCLK 42           // SPI 时钟
+#define PIN_SX_MOSI 15           // SPI 主机输出
+#define PIN_SX_MISO 41           // SPI 主机输入
+#define PIN_SX_RST 46            // 复位
+#define PIN_SX_BUSY 45           // 忙指示
 #define PIN_SX_DIO1 4            // SX1268 DIO1 中断（已接线到 G04）
                                  // ⚠️ 只有**第一个/唯一一个**射频（槽 0）能用它：
                                  //    多射频板每个射频都要一根 DIO1，引脚不够 →
                                  //    kRfSlots 里其余槽位 DIO1 填 -1。
                                  //    TdmaMac 收发已改轮询 IRQ 寄存器（不依赖 DIO1），
                                  //    所以接上与否不影响 TDMA 功能（见 README/文档 §4.1）
->>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
 
 #define RADIO_FREQ_MHZ 470.0f    // 全队一致：470.0MHz
 #define RADIO_BW_KHZ 500.0f      // 目标：SF7/500k（见 docs/wireless-research.md）
