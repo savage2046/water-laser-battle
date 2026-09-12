@@ -40,7 +40,25 @@
 | [docs/architecture.md](docs/architecture.md) / [README.md](README.md) | 决策表 + 链接同步 |
 
 ### 0.4 未验证事项（下一步优先）
+<<<<<<< HEAD
 1. **编译**：本会话终端环境故障（pwsh 0xC0000142）无法 `pio run` —— **接续第一步先编译三端固件**，修复可能的编译错误
+=======
+1. **编译**：~~终端环境故障无法 `pio run`~~ → **2026-09-10 已完成并修完编译错误**：
+   - ✅ `gun`（RAM 18.1% / Flash 23.6%）、`gun-selftest`、`lora-gwtest`、`gateway` **全部编译通过**
+   - `gateway` 曾因 5 处历史遗留编译不过：`setSPI()`（RadioLib 6.x 已删）、`SX_SCLK/SX_MISO/SX_MOSI/SX_NSS`
+     宏名错（应为 `PIN_SX_*`）、`setPacketMode()` 无参调用已删、`udp.beginPacketMulticast()` 不存在（→`beginPacket`）
+   - `gateway` 槽位表由 `{NSS,BUSY,RST}` 扩为 `{NSS,BUSY,RST,DIO1}`：**槽 0 用 `PIN_SX_DIO1`（G04，已接线）**，
+     其余槽位 DIO1 填 `-1`（多射频板没有每射频一根 DIO1 的引脚预算）；开机自检逐槽打印 DIO1 配置
+   - ⚠️ **`helmet` 仍编译不过**（3 处，与本批改动无关）：`MotionSensor.cpp` 的 `motionISR` 先 `extern` 后 `static`；
+     `LedStrip.cpp` 的 FastLED `addLeds` 模板参数与已装版本不匹配；`RadioLink.cpp` 同款 `SX_SCLK` 命名错
+   - 顺带修掉 4 处**会导致 TDMA 跑不起来**的逻辑问题（详见 `docs/lora-gateway-test.md` §4）：
+     阻塞 `transmit()` 白等 46ms（`TdmaMac::txFrame` 改轮询 IRQ）、注册窗裕量不足（2000µs→6000µs）、
+     超帧周期误差累积（改恒定周期 + 实际信标起点为相位基准）、`readData()`/`getPacketLength()` 顺序
+   - ✅ **`Ra-01S` 的 RadioLib 类修正（致命）**：SX1268 类只认版本字符串 `"SX1268"`、
+     SX1262 类只认 `"SX1261"`；三端此前用 `SX1262` 类 → 上板首测 `begin=-2 CHIP_NOT_FOUND`
+     （**不是焊接问题**）。现 `gun`/`gateway` 改 `SX1268`；`TdmaMac` 用基类 `SX126x*`；
+     测试固件自动试 SX1262/SX1268/LLCC68 并打印命中的类。详见 `docs/lora-gateway-test.md` §4.0
+>>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
 2. **烧录实测**：注册收敛时间、时延随 N 变化（示波器/日志打点）、1km 丢包率（前导 4/6/8 三档）、多设备并发开机注册碰撞、网关信道质量检测阈值校准（-95/-85dBm 为经验值）
 3. **任务栈实测**：`uxTaskGetStackHighWaterMark` 校准 `TDMA_TASK_STACK_WORDS`（单射频 4096 字假设）
 4. **时隙命中率**：多射频错峰后 ≥99% 目标；RX 盲区（连续 RX 只在窗口首武装）已处理，需实测确认

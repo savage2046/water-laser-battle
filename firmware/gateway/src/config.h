@@ -21,7 +21,16 @@
 #define PIN_SX_MISO 19           // SPI 主机输入
 #define PIN_SX_RST 16            // 复位
 #define PIN_SX_BUSY 17           // 忙指示
+<<<<<<< HEAD
 #define PIN_SX_DIO1 4            // 中断（RadioLib 轮询模式可不接）
+=======
+#define PIN_SX_DIO1 4            // SX1268 DIO1 中断（已接线到 G04）
+                                 // ⚠️ 只有**第一个/唯一一个**射频（槽 0）能用它：
+                                 //    多射频板每个射频都要一根 DIO1，引脚不够 →
+                                 //    kRfSlots 里其余槽位 DIO1 填 -1。
+                                 //    TdmaMac 收发已改轮询 IRQ 寄存器（不依赖 DIO1），
+                                 //    所以接上与否不影响 TDMA 功能（见 README/文档 §4.1）
+>>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
 
 #define RADIO_FREQ_MHZ 470.0f    // 全队一致：470.0MHz
 #define RADIO_BW_KHZ 500.0f      // 目标：SF7/500k（见 docs/wireless-research.md）

@@ -41,6 +41,12 @@ water-laser-battle/
 │   ├── espnow-verify/     # 电流检测板 ESP-NOW 信号验证固件（接收/统计/下行测试）
 │   ├── trigger-board/     # 检测板正式固件（ESP32-C3：INA226 电流识别 + MOSFET 断电 + ESP-NOW）
 │   ├── trigger-board-selftest/  # 检测板(ESP32-C3)硬件自检固件：INA226 电流检测 + ESP-NOW 连接
+<<<<<<< HEAD
+=======
+│   ├── gun-selftest/      # 枪端主控板体检+联调固件（T1 LED/T2 LoRa 在位/T3 ESP-NOW/
+│   │                      #   ★T4 自动连 LoRa 网关 + 每秒心跳 / ★T5 940nm-38kHz 光路矫正发射）
+│   ├── lora-gwtest/       # 枪端 PCB 充当 LoRa 网关的链路测试固件（SCAN/MON/GW/PING/ECHO）
+>>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
 │   └── gateway/           # 基地台网关固件（470M⇄WebSocket 桥接 + 开机自检/多射频）
 ├── server/                # Node.js 对战服务器 + Web 控制台
 └── tools/simulate.js      # 无硬件模拟器（模拟多网关 + 虚拟设备）
@@ -148,6 +154,11 @@ pio run -t upload
 - [检测板实现说明（trigger-board 固件 + 枪端集成）](docs/trigger-board.md)
 - [检测板正式板 PCB（triger-sensor.eprj2，解析报告）](PCB/triger-sensor-解析报告.md)
 - [校准靶板 PCB（calibration-target.eprj2，接线解析报告）](PCB/calibration-target/calibration-target-解析报告.md)
+<<<<<<< HEAD
+=======
+- [枪端自检固件联调记录（gun-selftest T1~T5）](docs/gun-selftest-联调记录.md)
+- [LoRa 网关链路测试（枪端 PCB 充当路由/网关 + 发现的正式固件隐患）](docs/lora-gateway-test.md)
+>>>>>>> a6cdf1eb7eb9efd0fa4af8e183905e260cf2321d
 - [硬件设计与接线](docs/hardware-design.md)
 - [通信协议规范](docs/protocol.md)
 - [470MHz LoRa 链路协议](docs/protocol-915m.md)
