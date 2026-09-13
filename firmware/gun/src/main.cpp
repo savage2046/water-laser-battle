@@ -184,7 +184,7 @@ static void handleFeedback() {
       break;
     case GunState::EV_DEATH:
       audio.play(AudioPlayer::FX_DEATH);
-      led.setState(false, true, false);  // 阵亡红
+      led.setState(false, true, false);  // 阵亡：快闪 4Hz
       break;
     case GunState::EV_RESPAWN:
       audio.play(AudioPlayer::FX_RESPAWN);
@@ -245,7 +245,7 @@ static void handleTdmaFrame(const TdmaFrame &f) {
       gun.resetForMatch();
       logBuf.log("S,%lu", millis() / 1000);
       audio.play(AudioPlayer::FX_START);
-      led.setState(true, true, false);
+      led.setState(true, true, false);  // 开局/重生·存活：常亮
       break;
     case TF_END:
       gun.endMatch(f.payload[0] == 0xFF ? -1 : (int)f.payload[0]);
@@ -253,13 +253,13 @@ static void handleTdmaFrame(const TdmaFrame &f) {
                  f.payload[0] == 0xFF ? -1 : (int)f.payload[0]);
       g_lastLogUpload = 0;  // 对局结束：尽快上传
       audio.play(AudioPlayer::FX_END);
-      led.setState(false, false, true);
+      led.setState(false, false, true);  // 对局结束：慢闪 0.5Hz
       break;
     case TF_RESPAWN:
       gun.respawn();
       logBuf.log("R,%lu", millis() / 1000);
       audio.play(AudioPlayer::FX_RESPAWN);
-      led.setState(true, true, false);
+      led.setState(true, true, false);  // 开局/重生·存活：常亮
       break;
     case TF_PAUSE:
       gun.pause();
@@ -369,8 +369,8 @@ void setup() {
   logBuf.begin();
   menu.begin();
   audio.begin(PIN_I2S_BCLK, PIN_I2S_WS, PIN_I2S_DOUT);
-  led.begin(PIN_LED_DATA, 1);
-  led.setState(false, false, false);  // 待机青色
+  led.begin(PIN_LED, 1);             // G48 模组板载单色 LED（低电平点亮）
+  led.setState(false, false, false);  // 待机：慢闪 1Hz
   pinMode(PIN_BTN_UP, INPUT_PULLUP);
   pinMode(PIN_BTN_DOWN, INPUT_PULLUP);
   pinMode(PIN_BTN_OK, INPUT_PULLUP);

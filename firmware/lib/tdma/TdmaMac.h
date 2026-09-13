@@ -68,7 +68,7 @@ class TdmaMac {
   void runDevice();
   void runGateway();
   void waitUntil(int32_t targetUs);
-  bool readPacketPoll(TdmaFrame &out, uint32_t deadlineUs);
+  bool readPacketPoll(TdmaFrame &out, uint32_t deadlineUs, bool fine = false);
   void txFrame(const TdmaFrame &f);
   void lockFromBeacon(const TdmaFrame &f, uint32_t rxEndUs);
   void pushRx(const TdmaFrame &f);
@@ -76,11 +76,18 @@ class TdmaMac {
 
   // 设备侧
   bool scanForBeacon();          // 扫描信道表找信标
+  // 单频点停留并统计信标证据（确证式扫描用；2026-09-13）
+  // ctrOut = 窗内最后一个信标的超帧计数器（用来区分"不同网关"：各自计数器独立）
+  bool dwellBeacon(uint8_t c, uint8_t &nOut, uint8_t &countOut, bool &ctrOkOut,
+                   uint32_t &ctrOut);
+  void advanceCandidate(const char *why);  // 注册无果 → 改试下一个候选信道（自愈）
+  void applyAssign(const TdmaFrame &f);    // 处理发给本机的 TF_ASSIGN（两窗共用）
   void tryJoin(uint32_t regStartUs);  // 注册时隙发 JOIN（带随机退避）
 
   // 网关侧
   void onGwUplink(const TdmaFrame &f);  // 维护设备表/触发重排
   void reSlot();                        // 密集重排 + 队列 TF_ASSIGN
+  void sendAssign(uint8_t gwIdx);       // 组一份 TF_ASSIGN 并入下行队列
   void expireDevices();                 // 心跳超时清理
 
   Role _role;
@@ -98,6 +105,13 @@ class TdmaMac {
   uint8_t _slot = 0;               // 设备时隙索引
   uint8_t _mapVer = 0;             // 设备已分配的 mapVer
   uint8_t _beaconMapVer = 0;       // 信标广播的 mapVer
+  uint8_t _preferCh = 0xFF;        // 优先尝试的信道（ASSIGN 指名换信道后设置）
+  // 候选信道（2026-09-13）：扫描时按"确证优先 + score 升序"存下（最多 4 个），
+  // 锁定后若收不到 TF_ASSIGN 就依次改试 → 锁到伪信标/别人的网关也能自愈。
+  uint8_t _candCh[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+  uint8_t _candCount = 0;
+  uint8_t _candIdx = 0;
+  uint32_t _joinWaitStartMs = 0;   // 开始等待 TF_ASSIGN 的时刻
   uint8_t _joinTries = 0;
   uint32_t _lastJoinUs = 0;
   uint8_t _joinPayload[5];         // 注册帧 payload（5B deviceId）

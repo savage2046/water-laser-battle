@@ -27,7 +27,7 @@ static const uint32_t T_REG_RX_MARGIN  = 6000;
 // 改为：以**实际信标空口起点**为基准、周期恒定 = 30+10N + T_SF_TAIL。
 static const uint32_t T_SF_TAIL = T_REG_RX_MARGIN + 2000;   // = 7000µs
 
-// MAC 任务栈（字）。单射频 4096 足够；多射频（T3 12 射频）须实测降至 2048-3072
+// MAC 任务栈（字）。单射频 4096 足够；多射频（T3 目标 3 射频）须实测降至 2048-3072
 // 或任务合并（见 docs/gateway-capacity.md §4.2/§6）——创建失败会跳过该射频。
 #ifndef TDMA_TASK_STACK_WORDS
 #define TDMA_TASK_STACK_WORDS 4096
@@ -144,7 +144,9 @@ void TdmaMac::waitUntil(int32_t targetUs) {
 //      返回 RADIOLIB_ERR_NONE，原写法会把上一包重复吐出来；
 //   ② getPacketLength() 必须在 readData() **之前**取（RadioLib 文档要求）；
 //   ③ 显式处理 CRC/报头错（硬件 CRC 失败时数据其实已读进缓冲，直接丢弃并重武装）。
-bool TdmaMac::readPacketPoll(TdmaFrame &out, uint32_t deadlineUs) {
+// fine=true：用 200µs 粒度轮询（vTaskDelay 是 1ms 粒度，足以错过 2.1ms 的前导）。
+// 设备端下行窗必须用 fine —— 见 runDevice 里 2026-09-13 的说明。
+bool TdmaMac::readPacketPoll(TdmaFrame &out, uint32_t deadlineUs, bool fine) {
   uint8_t buf[10];
   const uint16_t evIrq = RADIOLIB_SX126X_IRQ_RX_DONE | RADIOLIB_SX126X_IRQ_CRC_ERR |
                          RADIOLIB_SX126X_IRQ_HEADER_ERR;
@@ -160,7 +162,11 @@ bool TdmaMac::readPacketPoll(TdmaFrame &out, uint32_t deadlineUs) {
     } else if ((int32_t)(deadlineUs - micros()) <= 0) {
       return false;
     }
-    vTaskDelay(1);
+    if (fine) {
+      delayMicroseconds(200);
+    } else {
+      vTaskDelay(1);
+    }
   }
 }
 
@@ -174,7 +180,12 @@ void TdmaMac::txFrame(const TdmaFrame &f) {
   uint8_t buf[10];
   tdmaEncode(f, buf);
   _r->standby();                       // 配置命令需 standby
-  if (_r->startTransmit(buf, 10) != RADIOLIB_ERR_NONE) return;
+  if (_r->startTransmit(buf, 10) != RADIOLIB_ERR_NONE) {
+    // ⚠️ 2026-09-13：原实现静默返回 —— 帧已经被 ringPop 出队，一旦起发失败就永久丢失
+    //    （表现为"网关日志说补发了 ASSIGN，设备永远收不到"）。这里至少打出来。
+    Serial.println("[tdma] txFrame: startTransmit 失败，该帧丢失");
+    return;
+  }
   const uint32_t deadline = micros() + 150000;   // 150ms 兜底
   for (;;) {
     if (_r->getIrqStatus() & RADIOLIB_SX126X_IRQ_TX_DONE) break;
@@ -205,29 +216,160 @@ void TdmaMac::pushDl(const TdmaFrame &f) {
 }
 
 // ===== 设备从模式 =====
-// 负载均衡扫描：收集全部信道信标中的 N（该信道已注册设备数），
-// score = N×100 + 随机 0-99 → 选 N 最小者（负载最低），N 相同时随机分散
-// （多设备并发开机不扎堆同一信道）。选定后在目标信道听信标锁相。
-bool TdmaMac::scanForBeacon() {
-  uint8_t bestCh = 0xFF;
-  uint16_t bestScore = 0xFFFF;
-  for (uint8_t c = 0; c < _channelCount; c++) {
-    _r->setFrequency(_channels[c]);
-    _r->startReceive();
+// 单频点停留窗：真网关超帧 ≈40~200ms，250ms 内应能听到 ≥2 个信标。
+#define TDMA_SCAN_DWELL_US 250000
+
+// 在指定频点停留一个窗，统计"信标证据"：
+//   nOut=信标里的 N（该信道已注册设备数）｜countOut=窗内信标个数
+//   ctrOkOut=相邻两信标的超帧计数器是否**逐一递增**（真网关的硬特征）
+//
+// ⚠️ 2026-09-13 加固（实测踩坑）：原实现"取到第一帧就换频点"，且只按 N 打分
+//    （`score = N*100 + random(0..99)`）。当某频点存在**能解出 TF_BEACON 的强信号**时
+//    （实测 504MHz 处 −36dBm），它的 N 往往也是 1 → score 与真网关**同档** → 纯随机
+//    决胜负。实测后果：枪端锁到 ch17(504MHz) 的伪信标，在错误频点一直发 JOIN，而网关
+//    在 ch1(472MHz) → 永远注册不上（枪端日志 `ch17 selected (balanced), N=1 ver=0`
+//    之后一直是 `join try on ch17`、`reg=no`；网关侧什么都收不到）。
+//    现在只有"窗内 ≥2 个信标且计数器逐一递增"的频点才**确证**为本网网关。
+bool TdmaMac::dwellBeacon(uint8_t c, uint8_t &nOut, uint8_t &countOut,
+                          bool &ctrOkOut, uint32_t &ctrOut) {
+  _r->setFrequency(_channels[c]);
+  _r->startReceive();
+  const uint32_t deadline = micros() + TDMA_SCAN_DWELL_US;
+  uint8_t cnt = 0;
+  bool ctrOk = false;
+  uint32_t prev = 0;
+  bool havePrev = false;
+  nOut = 0;
+  ctrOut = 0;
+  for (;;) {
     TdmaFrame f;
-    uint32_t t0 = micros();
-    if (readPacketPoll(f, t0 + 250000) && f.type == TF_BEACON) {
-      uint8_t n = f.payload[4] & 0x1F;  // 该信道当前设备数（信标广播）
-      uint16_t score =
-          (uint16_t)n * 100u + (uint16_t)(esp_random() % 100);
-      if (score < bestScore) {
-        bestScore = score;
-        bestCh = c;
+    if (!readPacketPoll(f, deadline)) break;   // 窗内不再有帧
+    if (f.type != TF_BEACON) continue;         // 非信标：继续等，不能就此换频点
+    const uint32_t ctr = ((uint32_t)f.payload[0] << 24) |
+                         ((uint32_t)f.payload[1] << 16) |
+                         ((uint32_t)f.payload[2] << 8) | f.payload[3];
+    if (havePrev && ctr == prev + 1) ctrOk = true;   // 逐一递增 = 真网关
+    prev = ctr;
+    havePrev = true;
+    nOut = (uint8_t)(f.payload[4] & 0x1F);
+    cnt++;
+  }
+  countOut = cnt;
+  ctrOkOut = ctrOk;
+  ctrOut = prev;   // 末值：不同网关各自独立计数 → 值差异大 = 不同源
+  return cnt > 0;
+}
+
+// 注册无果 → 改试下一个候选信道（自愈，2026-09-13）。
+// 触发点：① runDevice 里"锁定后 2.5s 仍未收到 TF_ASSIGN"（对端不是本网网关，
+//            或 ASSIGN 一直被错过）；② 收到 slot=0xFF（网关说本信道已满）。
+// 没有其它候选时退回全表扫描（_preferCh=0xFF）。
+void TdmaMac::advanceCandidate(const char *why) {
+  if (_candCount >= 2) {
+    _candIdx = (uint8_t)((_candIdx + 1) % _candCount);
+    _preferCh = _candCh[_candIdx];
+  } else {
+    _preferCh = 0xFF;
+  }
+  _locked = false;
+  _assigned = false;
+  _joinWaitStartMs = millis();
+  Serial.printf("[tdma] 放弃 ch%u（%s）→ ", (unsigned)_channel, why);
+  if (_preferCh == 0xFF) {
+    Serial.println("重新全表扫描");
+  } else {
+    Serial.printf("改试候选 ch%u（%u/%u）\n", (unsigned)_preferCh,
+                  (unsigned)(_candIdx + 1), (unsigned)_candCount);
+  }
+}
+
+// 负载均衡扫描：**先确证本网网关**，再按 N 择优 —— score = N×100 + 随机 0-99
+//（选 N 最小者=负载最低，N 相同时随机分散，避免多设备并发开机扎堆同一信道）。
+// 选定后在目标信道听信标锁相。
+//
+// ⚠️ 2026-09-13：额外产出**候选信道列表** `_candCh[]`（确证优先、其次 score 小者优先）。
+//    锁定后若迟迟收不到 TF_ASSIGN（见 runDevice 超时判断 / slot=0xFF），就依次改试下一个
+//    —— "锁到了伪信标或别人的网关"因此不再是死路（原实现只会对着它一直发 JOIN）。
+bool TdmaMac::scanForBeacon() {
+  struct Hit {
+    uint8_t ch;
+    uint16_t score;
+    bool ok;   // 确证：本频点 ≥2 个信标且超帧计数器递增
+  };
+  Hit hits[TDMA_STD_CHANNELS];
+  uint8_t hitCount = 0;
+  bool chosen = false;
+
+  // 若刚被指定换信道（ASSIGN 指名 / 注册自愈重试）：**先只试那个频点**，
+  // 不要重新全表随机选一次（原实现换信道后走全表扫描，可能又选回伪信标 → 死循环）
+  if (_preferCh != 0xFF && _preferCh < _channelCount) {
+    uint8_t n = 0, cnt = 0;
+    bool ctr = false;
+    uint32_t ctrVal = 0;
+    const bool heard = dwellBeacon(_preferCh, n, cnt, ctr, ctrVal);
+    Serial.printf("[tdma] scan prefer-ch%u: %u beacon(s), counter=%s(sf=%lu)%s\n",
+                  (unsigned)_preferCh, (unsigned)cnt, ctr ? "ok" : "NO",
+                  (unsigned long)ctrVal,
+                  (heard && cnt < 2) ? "（只 1 个信标，按重试目标接受）" : "");
+    if (heard) {
+      // 重试目标：听到信标就接受（确证与否都试一次，反正收不到 ASSIGN 会继续换）
+      hits[hitCount].ch = _preferCh;
+      hits[hitCount].score = (uint16_t)n * 100u + 50u;
+      hits[hitCount].ok = (cnt >= 2 && ctr);
+      hitCount++;
+      chosen = true;
+    }
+    _preferCh = 0xFF;
+  }
+
+  if (!chosen) {
+    for (uint8_t c = 0; c < _channelCount; c++) {
+      uint8_t n = 0, cnt = 0;
+      bool ctr = false;
+      uint32_t ctrVal = 0;
+      if (!dwellBeacon(c, n, cnt, ctr, ctrVal)) continue;
+      Serial.printf("[tdma] scan ch%u(%.1fMHz): %u beacon(s), counter=%s(sf=%lu), N=%u\n",
+                    (unsigned)c, (double)_channels[c], (unsigned)cnt,
+                    ctr ? "ok" : "NO", (unsigned long)ctrVal, (unsigned)n);
+      if (hitCount < TDMA_STD_CHANNELS) {
+        hits[hitCount].ch = c;
+        hits[hitCount].score =
+            (uint16_t)n * 100u + (uint16_t)(esp_random() % 100);
+        hits[hitCount].ok = (cnt >= 2 && ctr);
+        hitCount++;
       }
     }
   }
-  if (bestCh == 0xFF) return false;  // 未听到任何信标
 
+  if (hitCount == 0) return false;   // 一个信标都没听到
+
+  // 排序：确证优先；同级按 score 升序（N 小=负载低者优先，同 N 随机分散）
+  for (uint8_t i = 0; i + 1 < hitCount; i++) {
+    for (uint8_t j = 0; j + 1 < hitCount - i; j++) {
+      const bool a = hits[j].ok, b = hits[j + 1].ok;
+      if ((!a && b) || (a == b && hits[j + 1].score < hits[j].score)) {
+        Hit t = hits[j];
+        hits[j] = hits[j + 1];
+        hits[j + 1] = t;
+      }
+    }
+  }
+
+  // 存候选（最多 4 个）供"注册无果时改试下一个"
+  _candCount = (hitCount > 4) ? 4 : hitCount;
+  for (uint8_t i = 0; i < _candCount; i++) _candCh[i] = hits[i].ch;
+  _candIdx = 0;
+  Serial.print("[tdma] 候选信道: ");
+  for (uint8_t i = 0; i < _candCount; i++) {
+    Serial.printf("ch%u%s%s", (unsigned)hits[i].ch,
+                  hits[i].ok ? "(确证)" : "(未确证)",
+                  (i + 1 < _candCount) ? " > " : "\n");
+  }
+  if (_candCount == 1 && !hits[0].ok)
+    Serial.println("[tdma] warn: 唯一候选未确证（可能不是本网网关，"
+                   "若注册不上请查是否有别的同参数信标/网关）");
+
+  const uint8_t bestCh = hits[0].ch;
   if (bestCh != _channel) {
     _channel = bestCh;
     _r->setFrequency(_channels[_channel]);
@@ -236,7 +378,7 @@ bool TdmaMac::scanForBeacon() {
   _r->startReceive();
   TdmaFrame f;
   uint32_t t0 = micros();
-  if (readPacketPoll(f, t0 + 250000) && f.type == TF_BEACON) {
+  if (readPacketPoll(f, t0 + TDMA_SCAN_DWELL_US) && f.type == TF_BEACON) {
     lockFromBeacon(f, micros());
     Serial.printf("[tdma] ch%u selected (balanced), N=%u ver=%u\n", _channel,
                   _n, _beaconMapVer);
@@ -265,13 +407,53 @@ void TdmaMac::tryJoin(uint32_t regStartUs) {
   Serial.printf("[tdma] join try on ch%u\n", _channel);
 }
 
+// 处理一份发给本机的 TF_ASSIGN（信标窗尾 / 下行窗 两处共用；2026-09-13 抽出）
+void TdmaMac::applyAssign(const TdmaFrame &f) {
+  const uint8_t newCh = f.payload[0];
+  const uint8_t newSlot = f.payload[1];
+  const uint8_t newN = f.payload[2];
+  const uint8_t newVer = f.payload[3];
+  if (newSlot == 0xFF) {
+    // 本信道已满：换下一个候选信道（advanceCandidate 会置 _locked=false/_preferCh；
+    // 没有其它候选时退回全表扫描）
+    Serial.printf("[tdma] ch%u full\n", _channel);
+    advanceCandidate("本信道已满");
+    return;
+  }
+  _slot = newSlot;
+  _mapVer = newVer;
+  _n = newN;
+  _assigned = true;
+  Serial.printf("[tdma] assigned ch%u slot%u N%u ver%u\n", _channel, _slot, _n,
+                _mapVer);
+  if (_channel != newCh) {
+    // 这条分支会把 _locked 置假 → 重新锁相；_preferCh 保证重扫时**只试这个信道**
+    // （否则全表扫描可能又选回伪信标/别的网关 → 死循环）
+    Serial.printf("[tdma] ASSIGN ch=%u 与本地 _channel=%u 不一致 → 重新锁相\n",
+                  newCh, _channel);
+    _channel = newCh;
+    _r->setFrequency(_channels[_channel]);
+    _preferCh = newCh;
+    _locked = false;
+  }
+}
+
 void TdmaMac::runDevice() {
   if (!_locked) {
     if (scanForBeacon()) {
-      // 首次锁定即尝试注册
+      _joinWaitStartMs = millis();   // 新信道：开始等 TF_ASSIGN
     } else {
       return;
     }
+  }
+
+  // 注册自愈（2026-09-13）：锁定后 2.5s 仍没收到 TF_ASSIGN —— 说明对端不是本网网关
+  //   （锁到伪信标 / 别人的网关），或 ASSIGN 一直被错过 → 换下一个候选信道重试。
+  //   正常情况 ASSIGN 在 1~2 个超帧内到达（远小于 2.5s），不会误触发。
+  if (!_assigned && _candCount > 1 &&
+      (uint32_t)(millis() - _joinWaitStartMs) > 2500) {
+    advanceCandidate("2.5s 未收到 ASSIGN");
+    return;
   }
 
   // 等待下一超帧起点（提前 6ms 唤醒，末段忙等）
@@ -283,45 +465,41 @@ void TdmaMac::runDevice() {
   uint32_t sfStart = _sfStartUs;
   TdmaFrame f;
 
-  // 1) 信标窗 RX：锁定/校正相位 + 刷新 N/mapVer
+  // 1) 信标窗 RX + 2) 广播下行窗 RX —— **两窗之间必须重新武装 RX**（2026-09-13 关键修正）
+  //
+  // ⚠️ 实测依据（COM14 网关日志）：网关每次都收到 JOIN 并立刻补发 TF_ASSIGN
+  //    （`[tdma] ch1 re-assign …` 连续刷屏、`devs=1` 稳定），而设备端 30 秒内一次都没进
+  //    `assigned` —— **上行通、下行全丢**。
+  //    原因：原实现把两窗当成两次独立轮询，step 1 读完信标后**没有重新武装 RX**，
+  //    而 RX_DONE 之后芯片并不保证仍留在 RX（原注释"连续模式未重武装必然捕获"是错的假设）。
+  //    网关下行帧在信标结束后 ~1ms 就发，前导只有 4 符号（SF7/BW500k ≈ 2.1ms），
+  //    错过前导即整帧丢失；再加上轮询粒度 1ms（vTaskDelay(1)）足以错过。
+  //    修法：① 读完信标**立刻重武装**；② 下行窗用 fine=true（200µs 粒度）。
   _r->startReceive();
-  if (readPacketPoll(f, sfStart + T_BE + 3000)) {
+  if (readPacketPoll(f, sfStart + T_BE + 3000, true)) {   // fine：尽快读到信标 → 相位更准、留足下行窗时间
     if (f.type == TF_BEACON) {
       lockFromBeacon(f, micros());
+    } else if (f.type == TF_ASSIGN && f.devIdx == _devIdx) {
+      applyAssign(f);   // ASSIGN 落在信标窗尾（设备起步晚）也一并消费，别丢进 RX 队列
     } else {
+      Serial.printf("[tdma] 信标窗收到 type=0x%02X devIdx=%u seq=%u\n",
+                    (unsigned)f.type, (unsigned)f.devIdx, (unsigned)f.seq);
       pushRx(f);
     }
   }
 
+  _r->startReceive();   // ← 关键：下行窗前重新武装（见上方说明）
+
   // 2) 广播下行窗 RX：最多取 1 帧（TF_ASSIGN 由 MAC 消费）
-  //    射频仍在 RX（连续模式，未重武装），网关下行帧 [9.3, 18.6ms] 必然被捕获
-  if (readPacketPoll(f, sfStart + T_BE + T_DL + 3000)) {
+  if (readPacketPoll(f, sfStart + T_BE + T_DL + 3000, true)) {
     if (f.type == TF_BEACON) {
       lockFromBeacon(f, micros());
     } else if (f.type == TF_ASSIGN && f.devIdx == _devIdx) {
-      uint8_t newCh = f.payload[0];
-      uint8_t newSlot = f.payload[1];
-      uint8_t newN = f.payload[2];
-      uint8_t newVer = f.payload[3];
-      if (newSlot == 0xFF) {
-        // 本信道已满：重新全信道负载均衡扫描（选其他最空信道）
-        Serial.printf("[tdma] ch%u full, rescan\n", _channel);
-        _assigned = false;
-        _locked = false;
-      } else {
-        _slot = newSlot;
-        _mapVer = newVer;
-        _n = newN;
-        _assigned = true;
-        Serial.printf("[tdma] assigned ch%u slot%u N%u ver%u\n", _channel,
-                      _slot, _n, _mapVer);
-        if (_channel != newCh) {
-          _channel = newCh;
-          _r->setFrequency(_channels[_channel]);
-          _locked = false;  // 换信道后重新锁相
-        }
-      }
+      applyAssign(f);
     } else {
+      // 诊断：能收到"别人的帧"就说明下行链路是通的（RX 确实武装上了）
+      Serial.printf("[tdma] DL窗收到 type=0x%02X devIdx=%u seq=%u（非本机 ASSIGN）\n",
+                    (unsigned)f.type, (unsigned)f.devIdx, (unsigned)f.seq);
       pushRx(f);
     }
   }
@@ -356,6 +534,19 @@ void TdmaMac::onGwUplink(const TdmaFrame &f) {
   for (uint8_t i = 0; i < _gwCount; i++) {
     if (_gw[i].valid && _gw[i].idx == f.devIdx) {
       _gw[i].lastSeenMs = now;
+      // ⚠️ 2026-09-13 修正（COM14 实测）：设备**还在发 JOIN** 就说明它没收到上次的
+      //    TF_ASSIGN —— 而 ASSIGN 原先只在"首次 JOIN"时入队一次，丢一次就**永远**
+      //    注册不上。实测现象：网关日志显示 devs=1、`[tdma] ch1 join dev=1` 只出现一次，
+      //    但设备每 3 个超帧（约 600ms）重发一次 JOIN，永不进入时隙。
+      //    对已登记设备的重复 JOIN 补发一份 ASSIGN（**不重排**：slot/N/ver 全不变，
+      //    所以不会打乱其他设备的时隙），注册即可自愈；同一份 ASSIGN 重复到达是幂等的。
+      if (f.type == TF_JOIN) {
+        sendAssign(i);
+        Serial.printf("[tdma] ch%u re-assign dev=%u slot=%u N=%u ver=%u "
+                      "(设备重复 JOIN，补发 ASSIGN)\n",
+                      _channel, _gw[i].idx, _gw[i].slot, _n,
+                      (unsigned)(_mapVer & 0x07));
+      }
       return;
     }
   }
@@ -368,7 +559,7 @@ void TdmaMac::onGwUplink(const TdmaFrame &f) {
     a.payload[0] = _channel;
     a.payload[1] = 0xFF;
     a.payload[2] = _n;
-    a.payload[3] = _mapVer;
+    a.payload[3] = (uint8_t)(_mapVer & 0x07);   // 与信标的 3 bit 对齐（见 sendAssign）
     pushDl(a);
     Serial.printf("[tdma] ch%u full, reject %u\n", _channel, f.devIdx);
     return;
@@ -382,20 +573,28 @@ void TdmaMac::onGwUplink(const TdmaFrame &f) {
   reSlot();
 }
 
+// 组一份 TF_ASSIGN 并压入下行队列（reSlot 与"设备重复 JOIN 时补发"两处共用）。
+// ⚠️ payload[3] 必须用**低 3 位**的 mapVer：信标里 mapVer 只有 3 bit
+//    （本文件末尾 `b.payload[4] = (uint8_t)((_mapVer << 5) | (_n & 0x1F))`），
+//    而设备端把信标解出来的 `_beaconMapVer` 与 ASSIGN 里的 `_mapVer` **直接比较**
+//    （runDevice 的 `canTx = ... && _beaconMapVer == _mapVer`）→ 发整个字节会在
+//    `_mapVer >= 8` 时永远对不上，设备就永久注册不上（潜伏 bug，2026-09-13 一并修）。
+void TdmaMac::sendAssign(uint8_t gwIdx) {
+  TdmaFrame a;
+  tdmaMake(a, _gw[gwIdx].idx, TF_ASSIGN, 0, 0, NULL);
+  a.payload[0] = _channel;
+  a.payload[1] = _gw[gwIdx].slot;
+  a.payload[2] = _n;
+  a.payload[3] = (uint8_t)(_mapVer & 0x07);
+  pushDl(a);
+}
+
 void TdmaMac::reSlot() {
   // 密集重排：注册序 → 时隙 0..count-1；mapVer 递增
   _mapVer++;
   _n = _gwCount > 0 ? _gwCount : 1;
   for (uint8_t i = 0; i < _gwCount; i++) _gw[i].slot = i;
-  for (uint8_t i = 0; i < _gwCount; i++) {
-    TdmaFrame a;
-    tdmaMake(a, _gw[i].idx, TF_ASSIGN, 0, 0, NULL);
-    a.payload[0] = _channel;
-    a.payload[1] = _gw[i].slot;
-    a.payload[2] = _n;
-    a.payload[3] = _mapVer;
-    pushDl(a);
-  }
+  for (uint8_t i = 0; i < _gwCount; i++) sendAssign(i);
 }
 
 void TdmaMac::expireDevices() {

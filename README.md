@@ -116,7 +116,7 @@ pio run -t upload
 | 470MHz LoRa 上报（SX1262 SPI 直驱，紧凑帧 + seq，ALOHA 过渡版） | firmware: `RadioLink` |
 | **TDMA 时隙 MAC（自适应 N=设备数，超帧 30+10N ms；开机自动分配信道/时隙）** | firmware/lib/tdma: `TdmaMac` |
 | **10 字节定长二进制帧（CRC8，分片/重组）** | firmware/lib/tdma: `TdmaProto` |
-| 无线升级方案：SX126x 多信道 TDMA（12 信道×17 时隙=200 设备 / 时延≤200ms / 1km） | docs/wireless-research.md |
+| 无线升级方案：SX126x 多信道 TDMA（3 信道×17 时隙=51 台 / 时延≤200ms / 1km） | docs/wireless-research.md |
 | 无改装水弹枪联动（电流检测扳机 + 击杀/空弹物理断电 + ESP-NOW 音效同步，研究+正式板设计完成） | docs/trigger-sensor-study.md + PCB/triger-sensor.eprj2 |
 | 枪端显示屏（血量/弹药/状态/倒计时） | firmware/gun: `Display` |
 | 头盔 GPS（NMEA 解析、位置归主人设备） | firmware/helmet: `Gps` |
@@ -148,7 +148,7 @@ pio run -t upload
 - 470MHz LoRa 紧凑帧（ALOHA 过渡版）：[docs/protocol-915m.md](docs/protocol-915m.md)
 - **TDMA MAC 层（自适应时隙 + 开机自动分配信道）**：[docs/tdma-mac.md](docs/tdma-mac.md)
 - **TDMA 10 字节定长帧协议**：[docs/protocol-tdma.md](docs/protocol-tdma.md)
-- **无线升级方案研究（SX126x + 多信道 TDMA：200 设备 / 时延≤200ms / 1km / 10B 定长帧）**：[docs/wireless-research.md](docs/wireless-research.md)
+- **无线升级方案研究（SX126x + 多信道 TDMA：50 台 / 时延≤200ms / 1km / 10B 定长帧）**：[docs/wireless-research.md](docs/wireless-research.md)
 
 ## 文档
 

@@ -22,7 +22,19 @@
 #define PIN_IR_RX_850 5          // 🆕 近距 56kHz IRM 预留（56k 暂缓；空闲高，中断；历史命名 _850）
 #define PIN_TRIGGER 6            // ✅ 扳机微开关（主控页 G06 悬空 stub 即此；上拉，按下接地）
 #define PIN_MOTOR 7              // 🆕 水弹波箱电机 MOSFET 栅极（G07 空脚）
-#define PIN_LED_DATA 8           // 🆕 WS2812 数据脚（G08 空脚）
+// ===== 状态灯（普通单色 LED，**不是 WS2812**）=====
+// ⚠️ 2026-09-13 修正：灯接在 **G48**，且是**普通单色 LED**。
+//    G48 的 LED 在**模组板上自带**：灌电流接法（阳极→3.3V、阴极→限流电阻→GPIO48）
+//    → **低电平点亮**，载板无需为它接任何线。
+//    依据：`PCB/gun-board/main-ESP32主控-U1管脚定义-在线读取.md`（G48 一节）、
+//          `docs/gun-selftest-联调记录.md`；`gun-selftest`(T1) / `lora-gwtest` /
+//          `wire-probe` / `spi-read` 一直用的就是 G48，命名也统一为 PIN_LED。
+//    原来写的 `PIN_LED_DATA 8 / WS2812` 是**规划但从未接线**的项
+//    （映射表标 🆕、§4 待办第 1 条"LED=G08 待接线"）→ 那颗灯不存在；
+//    且单色灯不认 WS2812 协议，所以 FastLED 版本纯属白费（已随之移除，
+//    gun/platformio.ini 里的 fastled 依赖也去掉了；将来真焊灯带再加回来）。
+#define PIN_LED 48               // ✅ 模组板载 LED（G48，低电平点亮）
+#define LED_ON_LEVEL LOW         // 灌电流接法：**低电平点亮**
 
 // ===== 音频（MAX98357A I2S 功放 + 8Ω 小喇叭；替代蜂鸣器）=====
 #define PIN_I2S_BCLK 9           // 🆕 MAX98357A BCLK（G09 空脚；S3 GPIO matrix 任意映射）

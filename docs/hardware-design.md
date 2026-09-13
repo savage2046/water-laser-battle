@@ -155,7 +155,7 @@ GPS 模块持续定位是头盔功耗大头（占 60%+），必须省电：
 | PIN_IR_POWER（远距功率档） | GPIO14（pin15）🆕 | 940 功率档切换（高=远档）；940 单档硬件可不接→0xFF |
 | TRIGGER（扳机） | GPIO6（pin6）✅ | 主控页 G06 悬空 stub；上拉，按下接地 |
 | MOTOR（水弹电机） | GPIO7（pin8）🆕 | MOSFET 栅极，扣扳机联动 |
-| LED_DATA（WS2812） | GPIO8（pin9）🆕 | 状态灯（RMT 驱动） |
+| LED（状态灯） | GPIO48（pin26）✅ | **模组板载单色 LED（非 WS2812）**：灌电流接法、**低电平点亮**，载板无需接线。2026-09-13 更正：原 `LED_DATA=G08` 的外置 WS2812 **从未接线** |
 | I2S_BCLK / WS / DOUT | GPIO9 / GPIO12 / GPIO11 🆕 | MAX98357A 功放（WS 原 18 让给 OLED SCL） |
 | OLED_SDA / OLED_SCL | GPIO17（pin34）/ GPIO18（pin33）✅ | SSD1306 I2C（地址 0x3C；软件 I2C） |
 | LIGHT_SENSE | GPIO10（pin11）🆕 | 环境光：光敏二极管+分压 → ADC1_CH10 |

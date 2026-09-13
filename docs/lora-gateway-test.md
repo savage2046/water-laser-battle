@@ -298,6 +298,22 @@ readData!"*。`firmware/gun/src/RadioLink.cpp::poll()` 顺序相反，取到的�
   冲突就打印 `❌ 引脚冲突` 并给出原因（strapping 脚只给 ⚠ 提示）。
 - 测试固件（`wire-probe` / `spi-read` / `lora-tx` / `lora-rx` / `spi-probe`）随之**去掉了
   单独的网关 env**：两块板接线相同，一律烧 `-e gun-s3`。
+- **2026-09-13 补齐最后一处不一致：OLED 由 21/22 改为与枪端相同的 17/18**
+  （`gateway/src/config.h` 的 `PIN_OLED_SDA/SCL`）。21/22 是**经典 ESP32 的默认 I2C 脚**，
+  而 **ESP32-S3 根本没有 GPIO22**（S3 的 GPIO 只有 0~21、26~48，22~25 不存在），
+  屏在 S3 上必然点不亮（不会崩：ESP-IDF 对非法脚只返回 `ESP_ERR_INVALID_ARG`）。
+  两端 `Display.cpp` 实现相同（都是 `U8G2_SSD1306_128X64_NONAME_F_SW_I2C` 软件 I2C，
+  构造参数为 `(U8G2_R0, scl, sda, U8X8_PIN_NONE)`），故只改引脚即可，代码零改动。
+  至此网关与枪端的 7 根射频线 + SPI 四线 + OLED 两线**全部一致**。
+- **2026-09-13 状态灯也对齐了**：网关原 `PIN_STATUS_LED 2`（经典 ESP32 的板载 LED 脚；
+  在 S3 上 G2 是空脚，枪端把 G2 当按键用）→ 改为与枪端相同的 **`PIN_LED 48`**。
+  ⚠️ 两点必须记住：① G48 的灯在**模组板上自带**、载板无需接线；
+  ② 它是**普通单色 LED（不是 WS2812）**，灌电流接法 → **低电平点亮**，
+  故用普通 `digitalWrite`、且极性反着写（网关里封装成 `statusLedWrite(bool)`）。
+  枪端 `LedStrip` 也随之从 FastLED/WS2812 版改写为单色版（"颜色"→**闪烁节奏**：
+  待机 1Hz 慢闪 / 存活常亮 / 阵亡 4Hz 快闪 / 结束 0.5Hz），接口不变、调用点无需改，
+  `gun/platformio.ini` 的 `fastled` 依赖一并去掉。原 `LED_DATA=G08` 是**规划未接线**项，
+  映射表已更正（`docs/gun-selftest-联调记录.md` 早就确认过 G48 才是实际那颗灯）。
 
 ### 4.9 【2026-09-12】正式固件"刷上去没输出" —— ESP32-S3 USB-CDC 把开机打印丢了
 
@@ -329,6 +345,92 @@ readData!"*。`firmware/gun/src/RadioLink.cpp::poll()` 顺序相反，取到的�
 ② 确认接的是**原生 USB 口**（S3 上 GPIO19/20 那一路；UART 桥那一路没有 CDC 输出）；
 ③ 看状态 LED 有没有在闪（在闪 = 程序在跑，问题只在串口通道）；④ 复位原因/backtrace
 （`CORE_DEBUG_LEVEL=2` 会打出来）——若是 `Brownout`/`TG0WDT` 之类，就是供电或死锁。
+
+### 4.10 【2026-09-13】网关自检误报 "no radio up" —— 探针没驱动 RST 就位
+
+**现象**：刷 `gateway`（`-e esp32s3`）后，串口每 2s 重复一行：
+
+```
+[self-test] FATAL: no radio up —— 查 PIN_SX_*(NSS=G16 SCK=G42 MOSI=G15 MISO=G41 RST=G46 BUSY=G45) / 3.3V 供电 / 模组焊接；本机已检测到 0 个槽位
+```
+
+`已检测到 0 个槽位` 是关键：它来自 `probeSlot()`，意思是**裸 SPI 读寄存器一个应答都没有**
+（注意区分：不是"应答了但 `begin()` 失败"——那种情况 `m > 0`，FATAL 里会显示 1）。
+
+**根因（代码缺陷，不是焊接/供电）**：`probeSlot()` 跑在 `RadioLink::begin()` **之前**，
+而全工程**唯一会驱动 RST 的地方**是 RadioLib 的 `SX126x::reset()`（在 `begin()` 内部：
+RST 输出低 1ms → 高 10ms）。所以自检这一刻 **G46 还停在上电默认态**：
+
+- G46 是 ESP32-S3 的 **strapping 脚**，软件不配置时其电平由**芯片内部弱上拉/弱下拉**决定
+  （ESP32-S3-WROOM-1 数据手册 §3.3 Strapping Pins："接高阻或不接时，strapping 脚的默认
+  输入电平由内部弱上拉/下拉决定"）；
+- SX1268 的 NRESET 只有**内部 ~50k 上拉、没有下拉**（数据手册表 8-3 `IN PU`）；
+- 两者分压 **≈1.6V**，正好落在 NRESET 阈值不确定区 → 芯片可能一直停在复位态，
+  SPI 完全不应答（MISO 读回 0x00/0xFF）→ `m=0` → FATAL。
+
+**对照证据**：昨晚能读到版本串的 `spi-read`，正因为它开机**显式驱动了 RST**
+（`spi-read/src/main.cpp:57-58` 输出高，`:315-317` 拉低 2ms 再拉高）。
+两者的引脚完全相同，唯一的结构性差异就是"有没有驱动 RST"。
+
+**顺手修掉的两个错**：
+
+| # | 错 | 正 |
+| --- | --- | --- |
+| 1 | 探针读 **0x0333**（RadioLib 未定义该寄存器） | 版本串在 **0x0320**（`RADIOLIB_SX126X_REG_VERSION_STRING`，RadioLib `findChip` 从这读 16 字节） |
+| 2 | 把 `rx[3]` 当"版本首字节" | **`rx[3]` 是状态字节**（实测恒 0xA2），数据从 `rx[4]` 起（`Module.cpp:402` 的 `buffIn[cmdLen+1]`）——正是 spi-read 踩过的偏移坑 |
+
+**修法**（`gateway/src/main.cpp`）：`probeSlot(nss, rst, busy)` 现在
+① 先 `pinMode(rst,INPUT)` 读一次原始电平并打印为 `before=`（用来判断 NRESET 是否本来就被压住）；
+② `pinMode(rst,OUTPUT)` + 拉高，解除复位、消除分压不确定态；③ 发 2ms 复位脉冲；④ 等 BUSY 释放；
+⑤ 读 0x0320 共 16 字节，按 `ver="SX1268…"` 判在位；⑥ **每次探测都打印原始字节**（不再只在成功时打）。
+
+自检通过时新增的那一行就是硬判据：
+
+```
+[self-test] slot nss=G16 rst=G46(before=0) st=0xA2 ver="SX1268 V2F 2F02..." -> present
+```
+
+**若修正后仍是 `0 个槽位`**，才轮到硬件，按 FATAL 里新给的顺序查：
+① 模组 3.3V（量模组 VCC-GND）；② **RES(G46) 对 GND 静态电压应 ≈3.3V**——若 ≈1.6V 说明
+NRESET 仍被分压 → **在 NRESET 与 3.3V 之间加 10k 上拉**（这也是根治办法：MCU 复位、未初始化、
+深睡时射频电平都不再不确定）；③ SPI 四线通断；④ 烧 `spi-read` 对照（能读到版本串 = 硬件没问题）。
+
+### 4.11 【2026-09-13】网关 WiFi 段阻塞开机 —— 联调 LoRa 先整体关掉
+
+**现象/隐患**：`gateway/src/main.cpp` 的 `setup()` 末尾是
+
+```cpp
+while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+```
+
+而 `WIFI_SSID` / `SERVER_HOST` 还是占位值（`"your-wifi"` / `192.168.1.100`）
+→ **永远连不上、永远出不来**：`setup()` 卡死在这里，`loop()` 一行都不跑，
+连"每 5s 一行心跳"也看不到（表现为刷完固件只有开机段，然后一片安静）。
+
+**处理（2026-09-13）**：新增总开关，联调期间整体关闭 WiFi/服务器：
+
+| 开关（`gateway/src/config.h`） | 作用 |
+| --- | --- |
+| `GW_WIFI_ENABLE 0` | 不初始化 WiFi、不连 WebSocket、不发网关间组播；LoRa / TDMA / 串口全部照常 |
+| `GW_MIRROR_UPLINK_SERIAL 1` | 把本该上报服务器的 JSON **镜像到串口**（`[up-json] {...}` 行） |
+
+实现方式（`gateway/src/main.cpp`）——用包装函数而不是到处写 `#if`：
+
+- `wsSend(const String &s)`：`GW_WIFI_ENABLE=1` 时 `ws.sendTXT(s)`；
+  `=0` 时打印 `[up-json] %s`。**各业务上报（`sendDev` 与各事件）一行都不用改。**
+  （形参必须是 `String`：调用点传的是 `serializeJson(doc, out)` 的产物，
+  写成 `const char*` 会编译报 `cannot convert 'String' to 'const char*'`。）
+- `localIpStr()`：状态行/屏幕要显示 IP，WiFi 关闭时返回 `"-"`。
+- `mcastSend/mcastPoll`、`wsEvent`、联网段、`loop()` 里的 `ws.loop()` 整段 `#if` 包住；
+  WiFi 关闭时 `mcastSend/mcastPoll` 提供空操作重载。
+- 头文件顺序要动：把 `#include "config.h"` 提到 `#if GW_WIFI_ENABLE` **之前**，
+  否则该宏还没定义。
+
+**效果**：不再阻塞开机；不接服务器也能从串口看到 JOIN / ASSIGN / 心跳 / 击杀等上行内容。
+**副作用（好的那种）**：WiFi + WebSockets + mbedTLS 不再链接，固件体积骤降 ——
+RAM 63,504 B → **36,024 B**，Flash 949,797 B → **326,585 B**（省下约 620 KB flash / 27 KB RAM）。
+
+恢复完整功能：`GW_WIFI_ENABLE` 改回 `1`，并把 `WIFI_SSID/WIFI_PASS/SERVER_HOST` 填成真实值。
 
 ## 5. 与 `TdmaMac` 的差异一览（2026-09-10 后已基本对齐）
 §4 的修正落地后，正式 `TdmaMac` 与本测试固件在**影响 TDMA 能否跑通的每一点上

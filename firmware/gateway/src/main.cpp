@@ -1,18 +1,57 @@
 #include <Arduino.h>
+#include "config.h"    // ⚠️ 必须放在最前：下面的 #if GW_WIFI_ENABLE 要用到它
+// WiFi/服务器相关头文件：GW_WIFI_ENABLE=0 时整体不编译（先跑通 LoRa）
+#if GW_WIFI_ENABLE
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <WebSocketsClient.h>
+#endif
 #include <ArduinoJson.h>
-#include "config.h"
 #include "RadioLink.h"
 #include "TdmaMac.h"
 #include "Display.h"
 
+#if GW_WIFI_ENABLE
 WebSocketsClient ws;
 WiFiUDP udp;                     // 网关间组播通道
-static bool g_wsConnected = false;
+#endif
+static bool g_wsConnected = false;   // WiFi 关闭时恒 false（LED 闪烁 / 状态行 ws=down）
 static unsigned long g_lastLedToggle = 0;
 static bool g_ledOn = false;
+
+// 状态灯：**G48 模组板载 LED，普通单色灯、灌电流接法 = 低电平点亮**（与枪端一致）。
+// ⚠️ 不要直接 digitalWrite(PIN_LED, HIGH/LOW) —— 极性是反的，写 HIGH 是"灭"。
+static inline void statusLedWrite(bool on) {
+  digitalWrite(PIN_LED, on ? LED_ON_LEVEL : (LED_ON_LEVEL == LOW ? HIGH : LOW));
+}
+
+// 上行发送包装：WiFi 关闭时是空操作（或镜像到串口）——
+// 这样各处业务上报（sendDev 与各事件）一行都不用改，也不用到处写 #if。
+// 形参用 String：原先各调用点传的是 serializeJson(doc, out) 产出的 String，
+// ws.sendTXT() 本身就接受 String（写 const char* 会编译报 cannot convert）。
+static inline void wsSend(const String &s) {
+#if GW_WIFI_ENABLE
+  ws.sendTXT(s);
+#else
+#if GW_MIRROR_UPLINK_SERIAL
+  Serial.printf("[up-json] %s\n", s.c_str());   // 本该发服务器的内容 → 串口，用于确认 LoRa 通了
+#else
+  (void)s;
+#endif
+#endif
+}
+
+// 状态行/屏幕要显示本机 IP：WiFi 关闭时给占位符，省得到处 #if
+static inline const char *localIpStr() {
+#if GW_WIFI_ENABLE
+  static char ip[16];
+  IPAddress a = WiFi.localIP();
+  snprintf(ip, sizeof(ip), "%u.%u.%u.%u", a[0], a[1], a[2], a[3]);
+  return ip;
+#else
+  return "-";
+#endif
+}
 
 // ===== 射频槽位表（开机自检用）=====
 // 每槽 { NSS, BUSY, RST }；SPI 总线共享（SCLK/MOSI/MISO 见 config.h PIN_SX_*）。
@@ -26,16 +65,11 @@ static bool g_ledOn = false;
 // T3 多射频板：按实际 PCB 填写全部槽位；没装满时其余槽留 0xFF 即可。
 // 注意：用 int16_t（int8_t 存 0xFF 会窄化为 -1，无法与 0xFF 比较）。
 static const int16_t kRfSlots[GW_RF_SLOTS][4] = {
-    // 槽 0（T1 单射频）：引脚直接引用 config.h —— 2026-09-12 起网关改用与枪端相同的接线
+    // 槽 0（已实现）：引脚直接引用 config.h —— 2026-09-12 起网关与枪端接线相同
     { PIN_SX_NSS, PIN_SX_BUSY, PIN_SX_RST, PIN_SX_DIO1 },
-    { 0xFF, 0xFF, 0xFF, 0xFF },  // 槽 1（示例未用；T3 填实际引脚，DIO1 填 -1）
-    { 0xFF, 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF, 0xFF },
-    { 0xFF, 0xFF, 0xFF, 0xFF },
+    // 槽 1..3（**目标 3 信道 = 50 台**，2026-09-13 定案）：待多射频板 PCB 定稿后填实际引脚。
+    //   每槽只需 NSS + BUSY 两根（RST 可多模块共用一根；DIO1 一律填 -1，收发改轮询 IRQ）。
+    //   填好后开机自检会自动认出并按噪声质量分配频点（assignFreqs：3 信道间隔约 18~20MHz）。
     { 0xFF, 0xFF, 0xFF, 0xFF },
     { 0xFF, 0xFF, 0xFF, 0xFF },
     { 0xFF, 0xFF, 0xFF, 0xFF },
@@ -144,28 +178,79 @@ static void learnDev(uint8_t idx, const char *devId, const char *name) {
 
 // ===== 开机自检：槽位探测 + 信道质量检测 + 频率自动分配 =====
 
-// SPI 读 SX1262 版本寄存器 0x0333（ReadRegister 0x1D）。
-// 空槽位 MISO 悬空 → 读回 0x00/0xFF → 判定不存在（快速筛除，再由 begin 确认）。
-static bool probeSlot(uint8_t nss, uint8_t busy) {
+// 空槽位快速筛除：SPI 读 SX1268 版本串 0x0320（ReadRegister 0x1D）。
+//
+// ⚠️ 2026-09-13 修正（关键）：探针必须**自己驱动 RST 并做复位脉冲**，不能指望 begin()。
+//    本函数跑在 RadioLink::begin() 之前，而 RadioLib 的 SX126x::reset()（RST 输出低 1ms
+//    → 高 10ms，SX126x.cpp）是**全工程唯一会驱动 RST 的地方** —— 探针这一刻 G46 还停在
+//    上电默认态。G46 是 ESP32-S3 的 strapping 脚：软件不配置时电平由**芯片内部弱上拉/
+//    弱下拉**决定（ESP32-S3-WROOM-1 数据手册 §3.3 Strapping Pins：接高阻或不接时，
+//    strapping 脚的默认输入电平由内部弱上拉/下拉决定）。此时 NRESET 由 SX1268 内部
+//    ~50k 上拉（数据手册表 8-3 "IN PU"）与 S3 内部弱下拉**分压 ≈1.6V**，正好落在
+//    NRESET 阈值不确定区 → 芯片可能一直停在复位态、SPI 完全不应答（MISO 读回 0x00/0xFF）
+//    → 返回 false → m=0 → 开机误报 FATAL "no radio up"，把矛头错指向"焊接/供电"。
+//    对照：昨晚 spi-read 能读到版本串，正因为它显式
+//    pinMode(RST,OUTPUT) + digitalWrite(RST,HIGH)，并做了 2ms 复位脉冲
+//    （spi-read/src/main.cpp:57-58、315-317）。
+//
+// 字节布局（昨晚实测，与 RadioLib Module.cpp:402 `memcpy(dataIn,&buffIn[cmdLen+1],…)`
+// 一致）：3 字节命令之后 rx[3] = **状态字节**（活芯片非 0x00/0xFF，实测 0xA2），
+// rx[4..] = 数据。旧代码把 rx[3] 当"版本首字节"是错的（这正是 spi-read 踩过的偏移坑）。
+static const uint16_t kSlotRstLowMs = 2;   // 复位脉冲低电平时长（SX126x 要求 >100µs）
+
+static bool probeSlot(uint8_t nss, uint8_t rst, uint8_t busy) {
   pinMode(nss, OUTPUT);
-  digitalWrite(nss, HIGH);
-  // 等待 BUSY 释放（最多 1ms；空槽位悬空则跳过）
+  digitalWrite(nss, HIGH);   // NSS 低有效：空闲与复位期间必须为高
+  pinMode(busy, INPUT);      // 模组驱动，只读
+
+  // ① 驱动前先读 RST 引脚的原始电平：读到 0 = NRESET 本来就被压住（芯片一直在复位）
+  //    ⚠️ 这里**故意不先 pinMode(rst, INPUT)**：ESP32 Arduino 的 pinMode(INPUT) 可能把
+  //    上电时的内部弱下拉/上拉一起清掉，那就把要测的电平抹掉了。直接 digitalRead 读的
+  //    是上电默认态下的真实电平。注意这只是**指示性**读数（阈值≈1.65V，分压点附近会抖）；
+  //    权威判据是用万用表量模组 RES 脚对 GND 的静态电压（见 FATAL 提示）。
+  int rstBefore = -1;
+  if (rst != 0xFF) {
+    rstBefore = digitalRead(rst);
+    pinMode(rst, OUTPUT);
+    digitalWrite(rst, HIGH);      // RST 低有效：强制解除复位，消除分压不确定态
+  }
+  // ② 标准复位脉冲（SX126x 要求 >100µs；2ms 富余，与 spi-read 一致）
+  if (rst != 0xFF) {
+    digitalWrite(rst, LOW);
+    delay(kSlotRstLowMs);
+    digitalWrite(rst, HIGH);
+    delay(10);                    // 复位后等芯片就绪
+  }
+  // ③ 等 BUSY 释放（最多 20ms；空槽位 BUSY 悬空会立即通过）
   uint32_t t0 = millis();
-  while (digitalRead(busy) == HIGH && millis() - t0 < 1) {}
+  while (digitalRead(busy) == HIGH && millis() - t0 < 20) {}
+
+  // ④ 读版本串 0x0320 共 16 字节（与 RadioLink::selfCheck、RadioLib findChip 同一寄存器）
+  uint8_t ver[16] = {0};
   SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
   digitalWrite(nss, LOW);
-  SPI.transfer(0x1D);                 // ReadRegister
-  SPI.transfer(0x03);                 // 地址 0x0333 高字节
-  SPI.transfer(0x33);                 // 低字节
-  uint8_t v0 = SPI.transfer(0x00);    // 版本（首个读字节，按 RadioLib 惯例）
-  uint8_t v1 = SPI.transfer(0x00);    // 冗余字节（兼容总线转向）
+  SPI.transfer(0x1D);                      // ReadRegister
+  SPI.transfer(0x03);                      // 地址 0x0320 高字节
+  SPI.transfer(0x20);                      // 低字节
+  const uint8_t st = SPI.transfer(0x00);   // rx[3] = 状态字节
+  for (uint8_t k = 0; k < 16; k++) ver[k] = SPI.transfer(0x00);  // rx[4..] = 数据
   digitalWrite(nss, HIGH);
   SPI.endTransaction();
-  bool any = (v0 != 0x00 && v0 != 0xFF) || (v1 != 0x00 && v1 != 0xFF);
-  if (any) {
-    Serial.printf("[self-test] slot NSS=%u version=0x%02X/0x%02X\n", nss, v0,
-                  v1);
-  }
+
+  char asc[17];
+  for (uint8_t k = 0; k < 16; k++)
+    asc[k] = (ver[k] >= 0x20 && ver[k] <= 0x7E) ? (char)ver[k] : '.';
+  asc[16] = '\0';
+  const char *want = "SX126";               // SX1268 的版本串以 "SX126" 开头
+  bool verOk = true;
+  for (uint8_t k = 0; k < 5; k++)
+    if (asc[k] != want[k]) verOk = false;
+  const bool any = verOk || (st != 0x00 && st != 0xFF);
+
+  Serial.printf("[self-test] slot nss=G%u rst=G%u(before=%d) st=0x%02X ver=\"%s\""
+                " -> %s\n",
+                (unsigned)nss, (unsigned)rst, rstBefore, (unsigned)st, asc,
+                any ? "present" : "absent");
   return any;
 }
 
@@ -254,7 +339,8 @@ static void assignFreqs(uint8_t m, float *freqs, uint8_t *gridIdx) {
   }
 }
 
-// ---------- 网关间组播通道 ----------
+// ---------- 网关间组播通道（GW_WIFI_ENABLE=0 时整段不编译）----------
+#if GW_WIFI_ENABLE
 static void mcastSend(const char *kind, uint8_t idx, uint16_t seq,
                       uint16_t p1 = 0, uint16_t p2 = 0) {
   char buf[100];
@@ -297,9 +383,15 @@ static void mcastPoll() {
   Serial.println();
   if (kind[0] != 'K') {
     gwDisplay.showEvent(kind, idx, seq, p1, p2);
-    digitalWrite(PIN_STATUS_LED, LOW);
+    statusLedWrite(true);   // 事件闪一下（G48 单色灯，低电平点亮）
   }
 }
+#else
+// WiFi 关闭：组播收发都是空操作（调用点一行都不用改）
+static inline void mcastSend(const char *, uint8_t, uint16_t, uint16_t = 0,
+                             uint16_t = 0) {}
+static inline void mcastPoll() {}
+#endif
 
 // ---------- TDMA 上行二进制帧 → JSON（dev*）----------
 static void sendDev(const char *t, uint8_t idx, uint16_t seq) {
@@ -315,7 +407,7 @@ static void sendDev(const char *t, uint8_t idx, uint16_t seq) {
   doc["seq"] = seq;
   String out;
   serializeJson(doc, out);
-  ws.sendTXT(out);
+  wsSend(out);
 }
 
 // P 帧 3 片重组（按 devIdx）
@@ -363,7 +455,7 @@ static void posFrag(const TdmaFrame &f) {
     doc["roll"] = pb.roll;
     String out;
     serializeJson(doc, out);
-    ws.sendTXT(out);
+    wsSend(out);
   }
 }
 
@@ -388,7 +480,7 @@ static void onTdmaUplink(uint8_t rfIdx, const TdmaFrame &f) {
       if (f.flags & TF_FLAG_HELMET) doc["helmet"] = true;
       String out;
       serializeJson(doc, out);
-      ws.sendTXT(out);
+      wsSend(out);
       Serial.printf("[up] ch%u devHello idx=%u dev=%s%s\n", rfIdx, f.devIdx,
                     devId,
                     (f.flags & TF_FLAG_HELMET) ? " (helmet)" : "");
@@ -416,7 +508,7 @@ static void onTdmaUplink(uint8_t rfIdx, const TdmaFrame &f) {
       doc["hp"] = hp;
       String out;
       serializeJson(doc, out);
-      ws.sendTXT(out);
+      wsSend(out);
       break;
     }
     case TF_DEATH: {
@@ -447,7 +539,7 @@ static void onTdmaUplink(uint8_t rfIdx, const TdmaFrame &f) {
       doc["upgrade"] = upgrade;
       String out;
       serializeJson(doc, out);
-      ws.sendTXT(out);
+      wsSend(out);
       break;
     }
     case TF_FIRE:
@@ -468,7 +560,7 @@ static void onTdmaUplink(uint8_t rfIdx, const TdmaFrame &f) {
       doc["seq"] = f.seq;
       String out;
       serializeJson(doc, out);
-      ws.sendTXT(out);
+      wsSend(out);
       break;
     }
     case TF_POS:
@@ -494,7 +586,7 @@ static void onTdmaUplink(uint8_t rfIdx, const TdmaFrame &f) {
       doc["channel"] = channel;
       String out;
       serializeJson(doc, out);
-      ws.sendTXT(out);
+      wsSend(out);
       break;
     }
     case TF_LOG: {
@@ -512,7 +604,7 @@ static void onTdmaUplink(uint8_t rfIdx, const TdmaFrame &f) {
       doc["payload"] = payload;
       String out;
       serializeJson(doc, out);
-      ws.sendTXT(out);
+      wsSend(out);
       break;
     }
     case TF_PAIR: {
@@ -525,7 +617,7 @@ static void onTdmaUplink(uint8_t rfIdx, const TdmaFrame &f) {
       doc["seq"] = f.seq;
       String out;
       serializeJson(doc, out);
-      ws.sendTXT(out);
+      wsSend(out);
       break;
     }
     default:
@@ -641,6 +733,7 @@ static void onServerCmd(const char *devId, JsonObject msg) {
   }
 }
 
+#if GW_WIFI_ENABLE
 void wsEvent(WStype_t type, uint8_t *payload, size_t length) {
   switch (type) {
     case WStype_CONNECTED: {
@@ -653,7 +746,7 @@ void wsEvent(WStype_t type, uint8_t *payload, size_t length) {
       doc["fw"] = FW_VERSION;
       String out;
       serializeJson(doc, out);
-      ws.sendTXT(out);
+      wsSend(out);
       break;
     }
     case WStype_DISCONNECTED:
@@ -677,6 +770,7 @@ void wsEvent(WStype_t type, uint8_t *payload, size_t length) {
       break;
   }
 }
+#endif  // GW_WIFI_ENABLE（wsEvent：服务器下发命令的处理）
 
 // ===== S3 引脚合法性检查（换板后最容易踩的坑，开机就报）=====
 // 返回 true = 该脚在 ESP32-S3 上不可用；why 给出原因。strapping 脚单独给"注意"。
@@ -733,7 +827,8 @@ void setup() {
   //    都会被丢弃** —— 表现就是"刷完固件打开监视器什么都没有"。
   //    所以：① 开机最多等主机 2.5s  ② loop 里主机接入时补打报告  ③ 每 5s 一行心跳
   for (uint32_t t = millis(); !Serial && (millis() - t) < 2500;) delay(20);
-  pinMode(PIN_STATUS_LED, OUTPUT);
+  pinMode(PIN_LED, OUTPUT);
+  statusLedWrite(false);   // 开机先灭（G48 低电平点亮，别写 LOW）
 
   // ===== 开机自检：引脚合法性 + 标准栅格 + 槽位探测 + 频率自动分配 =====
   checkPinsForS3();
@@ -747,7 +842,9 @@ void setup() {
   uint8_t m = 0;
   for (uint8_t i = 0; i < GW_RF_SLOTS; i++) {
     if (kRfSlots[i][0] == 0xFF) continue;  // 未定义/未装槽位
-    if (probeSlot((uint8_t)kRfSlots[i][0], (uint8_t)kRfSlots[i][1])) {
+    // 参数顺序：NSS、RST、BUSY（RST 现在必须传进去——探针自己要驱动它并复位）
+    if (probeSlot((uint8_t)kRfSlots[i][0], (uint8_t)kRfSlots[i][2],
+                  (uint8_t)kRfSlots[i][1])) {
       present[m++] = i;
     }
   }
@@ -786,11 +883,16 @@ void setup() {
     // 不要静默死循环：每 2s 把原因打一遍，否则 USB-CDC 下表现为"完全没输出"
     for (;;) {
       delay(2000);
-      Serial.printf("[self-test] FATAL: no radio up —— 查 PIN_SX_*(NSS=G%d SCK=G%d "
-                    "MOSI=G%d MISO=G%d RST=G%d BUSY=G%d) / 3.3V 供电 / 模组焊接；"
-                    "本机已检测到 %u 个槽位\n",
-                    PIN_SX_NSS, PIN_SX_SCLK, PIN_SX_MOSI, PIN_SX_MISO, PIN_SX_RST,
-                    PIN_SX_BUSY, (unsigned)m);
+      Serial.printf("[self-test] FATAL: no radio up —— 已驱动 RST(G%u) 并发过 %ums "
+                    "复位脉冲后仍无应答（本机检测到 %u 个槽位）。按序查："
+                    "① 模组 3.3V（量模组 VCC-GND）；"
+                    "② RES(G%u) 对 GND 静态电压应≈3.3V——若≈1.6V 说明 NRESET 仍被分压，"
+                    "需在 NRESET 到 3.3V 加 10k 上拉；"
+                    "③ SPI 四线通断 NSS=G%d SCK=G%d MOSI=G%d MISO=G%d；"
+                    "④ 烧 spi-read 固件对照（能读到版本串=硬件没问题）\n",
+                    (unsigned)PIN_SX_RST, (unsigned)kSlotRstLowMs, (unsigned)m,
+                    (unsigned)PIN_SX_RST, PIN_SX_NSS, PIN_SX_SCLK, PIN_SX_MOSI,
+                    PIN_SX_MISO);
     }
   }
 
@@ -820,6 +922,7 @@ void setup() {
                   (double)u.freqMhz, u.gridIdx);
   }
 
+#if GW_WIFI_ENABLE
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   Serial.printf("[wifi] connecting %s\n", WIFI_SSID);
@@ -834,6 +937,12 @@ void setup() {
   ws.setReconnectInterval(3000);
 
   udp.beginMulticast(MCAST_IP, MCAST_PORT);
+#else
+  // WiFi/服务器整体关闭（GW_WIFI_ENABLE=0）：不连网、不阻塞开机。
+  // ⚠️ 原代码这里会**阻塞等连上**（占位 SSID 永远连不上）——LoRa 联调不需要它。
+  Serial.println("[wifi] disabled (GW_WIFI_ENABLE=0) —— 只跑 LoRa；"
+                 "本该上报服务器的 JSON 镜像为 [up-json] 行");
+#endif
   gwDisplay.begin(PIN_OLED_SDA, PIN_OLED_SCL, OLED_ADDR);
   Serial.printf("[gw] %u radios ready, gateway up\n", g_rfCount);
 }
@@ -842,7 +951,7 @@ void setup() {
 // 调用于：主机后接入时补打、以及每 5s 心跳 —— 保证任何时候打开监视器都能看到状态
 static void printSerialReport() {
   Serial.printf("[gw] t=%lus rf=%u ip=%s ws=%s", (unsigned long)(millis() / 1000),
-                (unsigned)g_rfCount, WiFi.localIP().toString().c_str(),
+                (unsigned)g_rfCount, localIpStr(),
                 g_wsConnected ? "up" : "down");
   for (uint8_t j = 0; j < g_rfCount; j++) {
     Serial.printf(" | rf%u %.1fMHz k=%u devs=%u%s", (unsigned)j,
@@ -866,9 +975,11 @@ void loop() {
     if ((bool)Serial) printSerialReport();
   }
 
+#if GW_WIFI_ENABLE
   ws.loop();
 
   mcastPoll();
+#endif
 
   // 每个射频的 TDMA 上行 → 服务器（各 MAC 任务共听时隙）
   for (uint8_t j = 0; j < g_rfCount; j++) {
@@ -878,15 +989,16 @@ void loop() {
     }
   }
 
-  // 状态 LED：WS 在线常亮，离线闪烁
+  // 状态灯（G48 模组板载单色 LED，低电平点亮 → 走 statusLedWrite，别直写电平）：
+  // 服务器在线常亮；离线 300ms 闪 —— **闪 = 程序在跑**（不接服务器时就是常态）
   if (millis() - g_lastLedToggle > (g_wsConnected ? 2000 : 300)) {
     g_lastLedToggle = millis();
     g_ledOn = g_wsConnected ? true : !g_ledOn;
-    digitalWrite(PIN_STATUS_LED, g_ledOn);
+    statusLedWrite(g_ledOn);
   }
 
   // 显示屏：连接状态 + 全信道设备总数
   uint8_t total = 0;
   for (uint8_t j = 0; j < g_rfCount; j++) total += g_rf[j].mac.activeCount();
-  gwDisplay.update(g_wsConnected, total, WiFi.localIP().toString().c_str());
+  gwDisplay.update(g_wsConnected, total, localIpStr());
 }

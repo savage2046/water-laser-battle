@@ -1,7 +1,7 @@
 # 470MHz LoRa 链路协议（枪 ⇄ 网关群，SX1262 SPI 直驱）
 
 > **⚠️ MAC 层升级预告**：本文件为 **ALOHA 过渡版**协议。无线链路已确定升级为
-> **多信道 TDMA**（SX126x，SF7/500k × 12 信道 × 17 时隙 = 204 设备，时延 ≤200ms，
+> **多信道 TDMA**（SX126x，SF7/500k × 3 信道 × 17 时隙 = 51 台，时延 ≤200ms，
 > 1km，10 字节定长二进制帧）——方案见 [wireless-research.md](wireless-research.md)。
 > TDMA 落地时，本文件的 ASCII 帧将重设计为二进制定长帧（roadmap 待办 T1/T2），
 > 帧语义（J/H/D/F/B/C/P/T/L/A + W/S/E/R/X/V）与 `(deviceId, seq)` 去重规则保持不变。
