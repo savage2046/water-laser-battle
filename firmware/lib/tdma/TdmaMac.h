@@ -85,7 +85,7 @@ class TdmaMac {
   void tryJoin(uint32_t regStartUs);  // 注册时隙发 JOIN（带随机退避）
 
   // 网关侧
-  void onGwUplink(const TdmaFrame &f);  // 维护设备表/触发重排
+  void onGwUplink(const TdmaFrame &f, bool fromRegSlot);  // 维护设备表/触发重排
   void reSlot();                        // 密集重排 + 队列 TF_ASSIGN
   void sendAssign(uint8_t gwIdx);       // 组一份 TF_ASSIGN 并入下行队列
   void expireDevices();                 // 心跳超时清理
@@ -120,12 +120,17 @@ class TdmaMac {
   uint32_t _sfCounter = 0;
   uint32_t _sfStartUs = 0;         // 下一超帧起点
   uint8_t _n = 1;                  // 当前 N（来自信标/网关本地）
+  // 注册窗子槽数（1=稳态，3=注册突发）。信标 payload[4] 低 2 位广播，两端据此算超帧长度。
+  uint8_t _regSlots = 1;
+  uint8_t _joinCountdown = 0;      // 设备：还有几个超帧才轮到下次 JOIN 尝试（时隙 ALOHA）
+  uint32_t _regBurstUntilMs = 0;   // 网关：注册突发窗口保持到什么时刻
 
   // 网关设备表（每信道）
   struct GwDev {
     uint8_t idx;
     uint8_t slot;
     uint32_t lastSeenMs;
+    uint32_t lastAssignMs;   // 最近一次给它发 ASSIGN 的时刻（补发节流用）
     bool valid;
   };
   GwDev _gw[17];

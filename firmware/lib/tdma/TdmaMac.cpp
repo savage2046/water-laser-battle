@@ -27,6 +27,18 @@ static const uint32_t T_REG_RX_MARGIN  = 6000;
 // 改为：以**实际信标空口起点**为基准、周期恒定 = 30+10N + T_SF_TAIL。
 static const uint32_t T_SF_TAIL = T_REG_RX_MARGIN + 2000;   // = 7000µs
 
+// ===== 下行容量保护（2026-09-13，任务 1）=====
+// 下行窗每超帧只有 1 帧的容量（10ms）。补发 ASSIGN 的每设备最小间隔：
+// 50 台若各每 2s 补发一次 = 25 次/s ✗ 远超排水能力。配合 onGwUplink 的
+// "只对注册窗 JOIN 补发"，把补发率限死在 ≤1 帧/超帧 = 下行容量本身。
+static const uint32_t ASSIGN_RESEND_MIN_MS = 1000;
+// ===== 注册窗自适应（2026-09-13，任务 2）=====
+// 有新设备注册后把注册窗临时开到 REG_SLOTS_BURST 个子槽（提高冷启动收敛速度），
+// 静默 REG_BURST_HOLD_MS 后缩回 1 个子槽（保证稳态超帧仍是 37+10N ms）。
+// 子槽数通过信标 payload[4] 广播给设备，两端据此算超帧长度。
+static const uint8_t  REG_SLOTS_BURST = 3;
+static const uint32_t REG_BURST_HOLD_MS = 5000;
+
 // MAC 任务栈（字）。单射频 4096 足够；多射频（T3 目标 3 射频）须实测降至 2048-3072
 // 或任务合并（见 docs/gateway-capacity.md §4.2/§6）——创建失败会跳过该射频。
 #ifndef TDMA_TASK_STACK_WORDS
@@ -196,10 +208,16 @@ void TdmaMac::txFrame(const TdmaFrame &f) {
 
 void TdmaMac::lockFromBeacon(const TdmaFrame &f, uint32_t rxEndUs) {
   _sfStartUs = rxEndUs - T_AIR;  // 估算信标 TX 起点 = 超帧起点
-  _sfCounter = ((uint32_t)f.payload[0] << 24) | ((uint32_t)f.payload[1] << 16) |
-               ((uint32_t)f.payload[2] << 8) | f.payload[3];
-  _n = f.payload[4] & 0x1F;                    // 当前设备数（自适应）
-  _beaconMapVer = (uint8_t)(f.payload[4] >> 5);  // 映射版本
+  // ⚠️ 2026-09-13 信标 payload 布局调整（腾出一个字节放注册窗标志）：
+  //   payload[0..2] = 超帧计数器（24 位；5 超帧/s 也要 38 天才回绕）
+  //   payload[3]    = (mapVer << 5) | (N & 0x1F)
+  //   payload[4]    = 标志字节：低 2 位 = 注册窗子槽数（1 或 3），其余备用
+  _sfCounter = ((uint32_t)f.payload[0] << 16) | ((uint32_t)f.payload[1] << 8) |
+               f.payload[2];
+  _n = f.payload[3] & 0x1F;                      // 当前设备数（自适应）
+  _beaconMapVer = (uint8_t)(f.payload[3] >> 5);  // 映射版本
+  _regSlots = (uint8_t)(f.payload[4] & 0x03);    // 注册窗子槽数（算超帧长度用）
+  if (_regSlots == 0) _regSlots = 1;
   _locked = true;
 }
 
@@ -393,18 +411,30 @@ void TdmaMac::setJoinPayload(const uint8_t payload5[5], uint8_t flags) {
   _joinFlags = flags;
 }
 
+// 注册窗内发一帧 TF_JOIN（**真·时隙 ALOHA**，2026-09-13 改造，任务 2）
+//
+// 原实现："每 3 个超帧试一次" + 0~6ms 抖动 —— 多台设备同时开机时是**同一个确定性
+// 节拍**，会挤进同一个 10ms 注册窗撞成一团；按时隙 ALOHA 估算 G≈5.7 时每窗成功率仅
+// ~0.02（`S = G·e^-G`），50 台冷启动收敛要分钟级。
+// 现在：① 每次尝试后重抽一个 **1..8 超帧的随机等待**（把同步风暴打散成独立到达）；
+//       ② 在注册窗内**随机选一个子槽**（子槽数由信标的 `_regSlots` 给出），
+//          子槽内再加 0~0.5ms 抖动（帧 9.28ms < 子槽 10ms，抖动必须远小于子槽）。
 void TdmaMac::tryJoin(uint32_t regStartUs) {
-  if (_joinTries % 3 != 0) {  // 每 3 个超帧尝试一次，避免注册槽拥塞
-    _joinTries++;
+  if (_joinCountdown > 0) {      // 还没轮到本次尝试
+    _joinCountdown--;
     return;
   }
-  _joinTries++;
-  uint32_t jitter = (uint32_t)esp_random() % 6000;  // 0-6ms 随机退避
-  waitUntil(regStartUs + jitter);
+  _joinCountdown = (uint8_t)(1 + (esp_random() % 8));   // 下次尝试再等 1..8 个超帧
+
+  const uint8_t slots = (_regSlots == 0) ? 1 : _regSlots;
+  const uint8_t sub = (uint8_t)(esp_random() % slots);
+  const uint32_t jitter = (uint32_t)(esp_random() % 500);
+  waitUntil(regStartUs + (uint32_t)sub * T_SLOT + jitter);
   TdmaFrame j;
   tdmaMake(j, _devIdx, TF_JOIN, _joinFlags, 0, _joinPayload);
   txFrame(j);
-  Serial.printf("[tdma] join try on ch%u\n", _channel);
+  Serial.printf("[tdma] join try on ch%u (sub%u/%u)\n", _channel, (unsigned)sub,
+                (unsigned)slots);
 }
 
 // 处理一份发给本机的 TF_ASSIGN（信标窗尾 / 下行窗 两处共用；2026-09-13 抽出）
@@ -488,6 +518,11 @@ void TdmaMac::runDevice() {
     }
   }
 
+  // 采用**信标校正后的相位**：lockFromBeacon 已把 _sfStartUs 设为"本超帧真实起点"。
+  // 若仍沿用帧首那个本地推算值，本帧的时隙/注册窗就按上一帧的推算走，晶振漂移会逐帧
+  // 累积（实测 5 分钟内心跳序号已有明显丢包，见 docs/lora-联调记录-2026-09-13.md）。
+  sfStart = _sfStartUs;
+
   _r->startReceive();   // ← 关键：下行窗前重新武装（见上方说明）
 
   // 2) 广播下行窗 RX：最多取 1 帧（TF_ASSIGN 由 MAC 消费）
@@ -523,27 +558,36 @@ void TdmaMac::runDevice() {
     tryJoin(regStart);
   }
 
-  _sfStartUs = sfStart + T_BE + T_DL + (uint32_t)_n * T_SLOT + T_REG;
+  _sfStartUs = sfStart + T_BE + T_DL + (uint32_t)_n * T_SLOT +
+               (uint32_t)_regSlots * T_REG + T_SF_TAIL;
 }
 
 // ===== 网关主模式 =====
-void TdmaMac::onGwUplink(const TdmaFrame &f) {
+// 网关侧：收到一帧上行。fromRegSlot=true 表示这帧来自**注册窗**（设备还没时隙）。
+//
+// ⚠️ 2026-09-13 下行容量改造（任务 1）：
+//   原先"任何重复 JOIN 都补发一次 ASSIGN"——但设备侧有两类 JOIN：
+//     ① MAC 级 JOIN：设备**没拿到** ASSIGN（走注册窗，因为它没有时隙）；
+//     ② 应用级 JOIN：设备已注册，只是还没收到服务器的 W 帧，在**它自己的时隙**里重发 J
+//        （`gun/main.cpp` 的 `REJOIN_MS 5000`）。这类 JOIN 补发 ASSIGN **毫无意义**。
+//   若两者都补发，50 台 × 每 5s = 10 次/s 的 ASSIGN 会远超下行窗排水能力
+//   （每超帧只发 1 帧 = N=17 时 5 帧/s）→ W/S/E 等下行帧会被饿死。
+//   现在：**只有来自注册窗的 JOIN 才补发**，而注册窗每超帧最多进 1 帧 →
+//   补发率天然被限死在"每超帧 1 帧 = 下行容量本身"，不会挤占其它下行帧 ✓
+//   （外加每设备 ASSIGN_RESEND_MIN_MS 的节流兜底）。
+void TdmaMac::onGwUplink(const TdmaFrame &f, bool fromRegSlot) {
   if (f.devIdx == TF_BROADCAST_IDX) return;
   uint32_t now = millis();
   // 已登记设备：刷新 liveness（重复 JOIN 不触发重排）
   for (uint8_t i = 0; i < _gwCount; i++) {
     if (_gw[i].valid && _gw[i].idx == f.devIdx) {
       _gw[i].lastSeenMs = now;
-      // ⚠️ 2026-09-13 修正（COM14 实测）：设备**还在发 JOIN** 就说明它没收到上次的
-      //    TF_ASSIGN —— 而 ASSIGN 原先只在"首次 JOIN"时入队一次，丢一次就**永远**
-      //    注册不上。实测现象：网关日志显示 devs=1、`[tdma] ch1 join dev=1` 只出现一次，
-      //    但设备每 3 个超帧（约 600ms）重发一次 JOIN，永不进入时隙。
-      //    对已登记设备的重复 JOIN 补发一份 ASSIGN（**不重排**：slot/N/ver 全不变，
-      //    所以不会打乱其他设备的时隙），注册即可自愈；同一份 ASSIGN 重复到达是幂等的。
-      if (f.type == TF_JOIN) {
+      if (fromRegSlot && f.type == TF_JOIN &&
+          (uint32_t)(now - _gw[i].lastAssignMs) > ASSIGN_RESEND_MIN_MS) {
+        // 设备在注册窗里 JOIN = 它手上没有可用时隙 → 补发一份 ASSIGN
         sendAssign(i);
         Serial.printf("[tdma] ch%u re-assign dev=%u slot=%u N=%u ver=%u "
-                      "(设备重复 JOIN，补发 ASSIGN)\n",
+                      "(注册窗重复 JOIN，补发 ASSIGN)\n",
                       _channel, _gw[i].idx, _gw[i].slot, _n,
                       (unsigned)(_mapVer & 0x07));
       }
@@ -567,7 +611,10 @@ void TdmaMac::onGwUplink(const TdmaFrame &f) {
   _gw[_gwCount].idx = f.devIdx;
   _gw[_gwCount].valid = true;
   _gw[_gwCount].lastSeenMs = now;
+  _gw[_gwCount].lastAssignMs = now;
   _gwCount++;
+  // 有新设备注册 → 打开注册突发窗（多给两个子槽，让其余设备更快注册完）
+  _regBurstUntilMs = millis() + REG_BURST_HOLD_MS;
   Serial.printf("[tdma] ch%u join dev=%u -> %u devices\n", _channel, f.devIdx,
                 _gwCount);
   reSlot();
@@ -586,6 +633,7 @@ void TdmaMac::sendAssign(uint8_t gwIdx) {
   a.payload[1] = _gw[gwIdx].slot;
   a.payload[2] = _n;
   a.payload[3] = (uint8_t)(_mapVer & 0x07);
+  _gw[gwIdx].lastAssignMs = millis();   // 补发节流用（见 onGwUplink）
   pushDl(a);
 }
 
@@ -630,14 +678,17 @@ void TdmaMac::runGateway() {
   }
 
   // 1) 信标 TX（含 N 与 mapVer，自适应超帧长度）
+  //    注册窗子槽数也在这里决定并广播：有新设备注册后 5s 内开 3 个子槽，否则 1 个
+  //    （2026-09-13，任务 2；两端据此算出相同的超帧长度）
+  _regSlots = ((int32_t)(_regBurstUntilMs - millis()) > 0) ? REG_SLOTS_BURST : 1;
   TdmaFrame b;
   tdmaMake(b, TF_BROADCAST_IDX, TF_BEACON, 0, 0, NULL);
   uint32_t c = _sfCounter++;
-  b.payload[0] = (uint8_t)(c >> 24);
-  b.payload[1] = (uint8_t)(c >> 16);
-  b.payload[2] = (uint8_t)(c >> 8);
-  b.payload[3] = (uint8_t)c;
-  b.payload[4] = (uint8_t)((_mapVer << 5) | (_n & 0x1F));
+  b.payload[0] = (uint8_t)(c >> 16);
+  b.payload[1] = (uint8_t)(c >> 8);
+  b.payload[2] = (uint8_t)c;
+  b.payload[3] = (uint8_t)((_mapVer << 5) | (_n & 0x1F));
+  b.payload[4] = (uint8_t)(_regSlots & 0x03);   // 注册窗子槽数（1 或 3）
   // 相位基准：**实际信标空口起点**（设备端 lockFromBeacon 也是以信标空口起点
   // 为准的），不再用本地预定时刻 sfStart —— 这样两端相位天然一致。
   const uint32_t bcStart = micros();
@@ -663,17 +714,21 @@ void TdmaMac::runGateway() {
     uint32_t sEnd = sStart + T_SLOT + T_SLOT_RX_MARGIN;   // 取包余量
     TdmaFrame f;
     if (readPacketPoll(f, sEnd)) {
-      onGwUplink(f);
+      onGwUplink(f, false);   // 来自设备时隙（设备已有时隙）→ 不补发 ASSIGN，见 onGwUplink
       pushRx(f);
     }
   }
 
-  // 4) 注册时隙（新设备 JOIN / 失配设备补 JOIN）
+  // 4) 注册窗（1~3 个子槽，见 _regSlots）：新设备 JOIN / 失配设备补 JOIN
+  //    每个子槽 = 一帧容量（10ms，帧 9.28ms + 抖动余量）。设备在子槽内随机选一个。
   uint32_t regStart = bcStart + T_BE + T_DL + (uint32_t)_n * T_SLOT;
-  TdmaFrame f;
-  if (readPacketPoll(f, regStart + T_REG + T_REG_RX_MARGIN)) {
-    onGwUplink(f);
-    pushRx(f);
+  for (uint8_t s = 0; s < _regSlots; s++) {
+    TdmaFrame f;
+    uint32_t subEnd = regStart + (uint32_t)(s + 1) * T_SLOT + 2000;
+    if (readPacketPoll(f, subEnd)) {
+      onGwUplink(f, true);    // 来自注册窗 → 必要时补发 ASSIGN
+      pushRx(f);
+    }
   }
   _r->standby();
 
@@ -682,5 +737,6 @@ void TdmaMac::runGateway() {
 
   // 6) 下一个超帧：以实际信标起点为基准、**周期恒定** = 30+10N + T_SF_TAIL
   //    （不能按标称 30+10N 递推：注册窗会超时，误差逐帧累积 → 设备失锁）
-  _sfStartUs = bcStart + T_BE + T_DL + (uint32_t)_n * T_SLOT + T_REG + T_SF_TAIL;
+  _sfStartUs = bcStart + T_BE + T_DL + (uint32_t)_n * T_SLOT +
+               (uint32_t)_regSlots * T_REG + T_SF_TAIL;
 }

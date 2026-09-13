@@ -42,7 +42,7 @@ POS 分片 flags：片0=`FIRST|MORE`，片1=`MORE`，片2=无。网关按 devIdx
 
 | type | 名称 | payload[0..4] |
 | --- | --- | --- |
-| 0x00 BEACON | 信标（广播） | 超帧计数(4B BE) \| mapVer<<5\|N（**N 同时用作设备注册时的信道负载均衡依据**） |
+| 0x00 BEACON | 信标（广播） | 超帧计数(**3B BE**) \| `mapVer<<5 \| N` \| 标志字节：**低 2 位 = 注册窗子槽数**（1 或 3），其余备用。<br>**N** 同时用作设备注册时的信道负载均衡依据；**子槽数**用于两端算出相同的超帧长度（`T_BE+T_DL+N×T_SLOT+regSlots×T_REG+T_SF_TAIL`）。<br>⚠️ **2026-09-13 改版**：原为「超帧计数 4B + mapVer/N 1B」，为广播注册窗子槽数把计数压到 3B（5 超帧/s 也需 38 天才回绕）。**两端必须同版本固件**；`lora-gwtest` / `gun-selftest` 各自带独立 MAC 副本、未同步此改动 → 与正式固件**不再互通** |
 | 0x0B WELCOME | 欢迎/规则（3 片） | 见下 |
 | 0x0C START | 对局开始（广播） | mode（预留 0） |
 | 0x0D END | 对局结束（广播） | winner（0xFF=平局） |
