@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp_mac.h>      // esp_read_mac()：读出厂 MAC（deriveIdentity 用）
 #include <esp_system.h>   // esp_random() 硬件真随机
 #include "config.h"
 #include "LaserCodec.h"
@@ -26,10 +27,58 @@ static void tdmaSend(uint8_t type, const uint8_t *payload5, uint8_t flags) {
   tdma.send(type, payload5, flags, nextSeq());
 }
 
-// 5B deviceId payload（"G0001" → 5 ASCII 字节）
+// ===== 设备身份：**从芯片 MAC 自动派生**（2026-09-13）=====
+// 目的：换板/换枪**不需要为每块板单独编译固件** —— 身份由 eFuse MAC 决定（同一块板恒定），
+//       字符串以 **'G'** 开头标明是**枪端**（头盔用 'H'）。
+// 命名：`G` + 4 位 base32（字母表去掉 I/L/O/U，避免与 1/0 混淆）= 5 字节 deviceId，
+//       正好对齐协议的 5B deviceId 字段（见 docs/protocol-tdma.md 的 J 帧）。
+//       devIdx 是 1 字节短号（1..199；0xFF 是广播），由 MAC 的 FNV-1a 哈希取模而来。
+// 需要钉死身份时仍可用 -D 覆盖（见 config.h）：-D DEV_IDX=2 -D DEVICE_ID=\"G0002\"
+//
+// ⚠️ 已知局限：devIdx 只有 8 位 → 设备多到几十台时**必然出现碰撞**（生日问题），
+//    而网关是按 devIdx 识别设备的。真正的唯一身份是 5 字节 deviceId 字符串；
+//    devIdx 只是短号。彻底解法：**网关在 ASSIGN 里下发它分配的 devIdx**
+//    （ASSIGN 的 payload[4] 正好空着），设备改用网关分配值 —— 见 docs/roadmap.md 待办。
+static uint8_t g_devIdx = 1;       // 运行时派生
+static char g_devId[6] = "G0000";  // 5 字符 + '\0'
+
+static void deriveIdentity() {
+  // ⚠️ 不能用 ESP.getEfuseMac()：**ESP32-S3 上它返回值的低字节与真实 MAC 不一致**，
+  //    实测两块不同的板算出了同一个身份（"GC6T4"）→ 网关把它们当成同一台设备。
+  //    改用 esp_read_mac() 读**出厂 MAC**（6 字节、顺序正确）。
+  uint8_t mac[6] = {0};
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+
+  if (DEVICE_ID[0] != '\0') {
+    snprintf(g_devId, sizeof(g_devId), "%s", DEVICE_ID);   // 显式指定
+  } else {
+    // 'G' + MAC **后 3 字节**的 base32（20 位 = 104 万组合；50 台时碰撞概率 ~0.1%）
+    static const char kAbc[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    const uint32_t v = ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | mac[5];
+    g_devId[0] = 'G';
+    for (int i = 1; i <= 4; i++) g_devId[i] = kAbc[(v >> ((4 - i) * 5)) & 0x1F];
+    g_devId[5] = '\0';
+  }
+
+  if (DEV_IDX != 0) {
+    g_devIdx = (uint8_t)DEV_IDX;
+  } else {
+    uint32_t h = 2166136261u;                              // FNV-1a，全 6 字节
+    for (int i = 0; i < 6; i++) {
+      h ^= (uint32_t)mac[i];
+      h *= 16777619u;
+    }
+    g_devIdx = (uint8_t)(1 + (h % 199u));                  // 1..199
+  }
+  Serial.printf("[gun] identity: deviceId=\"%s\" devIdx=%u MAC=%02X:%02X:%02X:%02X:%02X:%02X"
+                " （自动派生）\n",
+                g_devId, (unsigned)g_devIdx, mac[0], mac[1], mac[2], mac[3], mac[4],
+                mac[5]);
+}
+
+// 5B deviceId payload（"G7KQP" → 5 ASCII 字节）
 static void devIdPayload(uint8_t out[5]) {
-  const char *id = DEVICE_ID;
-  for (int i = 0; i < 5; i++) out[i] = id[i] ? (uint8_t)id[i] : 0;
+  for (int i = 0; i < 5; i++) out[i] = g_devId[i] ? (uint8_t)g_devId[i] : 0;
 }
 
 // H 帧：payload = {shooter(2B BE), shotSeq, weapon<<4|channel, hp}
@@ -236,7 +285,7 @@ static void welcomeFrag(const TdmaFrame &f) {
 
 static void handleTdmaFrame(const TdmaFrame &f) {
   // 目标寻址：广播或发给本设备
-  if (f.devIdx != TF_BROADCAST_IDX && f.devIdx != DEV_IDX) return;
+  if (f.devIdx != TF_BROADCAST_IDX && f.devIdx != g_devIdx) return;
   switch (f.type) {
     case TF_WELCOME:
       welcomeFrag(f);
@@ -359,10 +408,11 @@ void setup() {
   gunEspNow.begin(kBoardMac);
 #endif
   // TDMA MAC：设备模式，开机负载均衡扫描 + 注册时隙 JOIN
+  deriveIdentity();   // 身份从 MAC 自动派生（须在 setJoinPayload / begin 之前）
   uint8_t joinP[5];
   devIdPayload(joinP);
   tdma.setJoinPayload(joinP, 0);
-  tdma.begin(TdmaMac::ROLE_DEVICE, DEV_IDX, radio.getRadio(), kChannels,
+  tdma.begin(TdmaMac::ROLE_DEVICE, g_devIdx, radio.getRadio(), kChannels,
              TDMA_CHANNELS, 0, TDMA_MAX_SLOTS);
   gun.begin();
   display.begin(PIN_OLED_SDA, PIN_OLED_SCL, OLED_ADDR);
@@ -413,13 +463,21 @@ void loop() {
     if ((bool)Serial) printSerialReport();
   }
 
-  // 1) 已分配但未收到 welcome：每 5s 走自身时隙重发 J（触发服务器重发 W）
-  if (tdma.assigned() && !g_registered &&
-      millis() - g_lastJoin > REJOIN_MS) {
-    g_lastJoin = millis();
-    uint8_t joinP[5];
-    devIdPayload(joinP);
-    tdma.send(TF_JOIN, joinP, 0, 0);
+  // 1) 【2026-09-13 暂时注释】"等服务器 W 帧"的重发逻辑。
+  //    联调阶段网关不接服务器（gateway: GW_WIFI_ENABLE=0）→ 永远收不到 W 帧 →
+  //    这段会每 5 秒重发一次 J：网关反复补发 ASSIGN、串口被刷屏，还白占下行窗
+  //    （每超帧只有 1 帧下行）。改为"MAC 层已分配即视为连上"。
+  //    ⚠️ 将来恢复服务器联调时，把下面 6 行放回来即可。
+  // if (tdma.assigned() && !g_registered && millis() - g_lastJoin > REJOIN_MS) {
+  //   g_lastJoin = millis();
+  //   uint8_t joinP[5];
+  //   devIdPayload(joinP);
+  //   tdma.send(TF_JOIN, joinP, 0, 0);
+  // }
+  if (tdma.assigned() && !g_registered) {
+    g_registered = true;   // 联调期：MAC 分配即视为已连接（不等服务器 W 帧）
+    Serial.println("[gun] MAC assigned -> treated as connected"
+                   " (server W-frame path disabled)");
   }
 
   // 2) 已分配后：心跳每 10s（网关据此维护活跃设备表）
@@ -511,13 +569,17 @@ void loop() {
   lightUpdate();
 
   // 6.7) 日志上传时机
-  if (logBuf.usage() >= LOG_UPLOAD_FULL) {
-    uploadLogs();
-  } else if (logBuf.pending() &&
-             millis() - g_lastLogUpload >= LOG_UPLOAD_IDLE_MS) {
-    g_lastLogUpload = millis();
-    uploadLogs();
-  }
+  // 【2026-09-13 暂时注释】日志上传链路（L 帧 → 网关 → 服务器）。
+  //   联调期不接服务器，且上行/下行带宽都要留给注册与心跳，故整条关掉。
+  //   本地 logBuf 的记录调用**保留**（开机/命中/阵亡/夺旗等，将来接服务器要补传），
+  //   只是不再往空口发 L 帧。恢复时把下面 7 行放回来即可。
+  // if (logBuf.usage() >= LOG_UPLOAD_FULL) {
+  //   uploadLogs();
+  // } else if (logBuf.pending() &&
+  //            millis() - g_lastLogUpload >= LOG_UPLOAD_IDLE_MS) {
+  //   g_lastLogUpload = millis();
+  //   uploadLogs();
+  // }
 
   // 6.8) 菜单按键扫描 + 超时返回 + 动作消费
   scanMenuButtons();
@@ -543,7 +605,7 @@ void loop() {
   gun.update();
 
   // 8) 显示屏刷新（内部 200ms 节流 + 状态变化立即刷新）
-  display.update(g_registered && tdma.assigned(), DEVICE_ID);
+  display.update(g_registered && tdma.assigned(), g_devId);
 
   delay(2);  // 节流主循环，兼顾 ISR 缓冲（TDMA 任务独立于本循环）
 }

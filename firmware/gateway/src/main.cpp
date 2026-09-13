@@ -470,7 +470,15 @@ static void onTdmaUplink(uint8_t rfIdx, const TdmaFrame &f) {
         if (devId[i] == ' ') devId[i] = '\0';
         else break;
       }
-      learnDev(f.devIdx, devId, devId);
+      // ★ 2026-09-13（协议 v2）：短号由**网关分配**，而设备 JOIN 帧里带的是它**自报**的号，
+      //   它之后的帧（HB/命中等）才带分配号 → 必须按身份串查出分配号来建映射，
+      //   否则 devIdOf() 查不到、事件会被当成 "unknown devIdx" 丢掉。
+      uint8_t useIdx = f.devIdx;
+      {
+        const uint8_t a = g_rf[rfIdx].mac.assignedIdx(devId);
+        if (a != 0xFF) useIdx = a;
+      }
+      learnDev(useIdx, devId, devId);
       JsonDocument doc;
       doc["t"] = "devHello";
       doc["gatewayId"] = GATEWAY_ID;
@@ -481,7 +489,7 @@ static void onTdmaUplink(uint8_t rfIdx, const TdmaFrame &f) {
       String out;
       serializeJson(doc, out);
       wsSend(out);
-      Serial.printf("[up] ch%u devHello idx=%u dev=%s%s\n", rfIdx, f.devIdx,
+      Serial.printf("[up] ch%u devHello idx=%u dev=%s%s\n", rfIdx, useIdx,
                     devId,
                     (f.flags & TF_FLAG_HELMET) ? " (helmet)" : "");
       break;

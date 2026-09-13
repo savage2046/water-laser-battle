@@ -48,6 +48,10 @@ class TdmaMac {
   bool pollDownlink(TdmaFrame &out);
   bool assigned() { return _assigned; }  // 已获信道+时隙分配
   uint8_t channelIdx() { return _channel; }
+  // 按 5 字节身份串查"网关给它分配的短号"；未登记返回 0xFF。
+  // 应用层（网关 main.cpp）用它建立 devIdx→devId 映射：设备 JOIN 帧里带的是自报号，
+  // 之后用的是分配号，不查这个就会把事件当成 "unknown devIdx" 丢掉。
+  uint8_t assignedIdx(const char *devId) const;
   uint8_t slotIdx() { return _slot; }
   // 注册帧内容（设备开机自动 JOIN 用）：payload5=5B deviceId，flags=TF_FLAG_HELMET
   void setJoinPayload(const uint8_t payload5[5], uint8_t flags);
@@ -79,7 +83,7 @@ class TdmaMac {
   // 单频点停留并统计信标证据（确证式扫描用；2026-09-13）
   // ctrOut = 窗内最后一个信标的超帧计数器（用来区分"不同网关"：各自计数器独立）
   bool dwellBeacon(uint8_t c, uint8_t &nOut, uint8_t &countOut, bool &ctrOkOut,
-                   uint32_t &ctrOut);
+                   uint32_t &ctrOut, uint8_t &chOut);
   void advanceCandidate(const char *why);  // 注册无果 → 改试下一个候选信道（自愈）
   void applyAssign(const TdmaFrame &f);    // 处理发给本机的 TF_ASSIGN（两窗共用）
   void tryJoin(uint32_t regStartUs);  // 注册时隙发 JOIN（带随机退避）
@@ -87,7 +91,7 @@ class TdmaMac {
   // 网关侧
   void onGwUplink(const TdmaFrame &f, bool fromRegSlot);  // 维护设备表/触发重排
   void reSlot();                        // 密集重排 + 队列 TF_ASSIGN
-  void sendAssign(uint8_t gwIdx);       // 组一份 TF_ASSIGN 并入下行队列
+  void sendAssign(uint8_t gwIdx, uint8_t toIdx);   // 组一份 TF_ASSIGN 并入下行队列
   void expireDevices();                 // 心跳超时清理
 
   Role _role;
@@ -125,13 +129,38 @@ class TdmaMac {
   uint8_t _joinCountdown = 0;      // 设备：还有几个超帧才轮到下次 JOIN 尝试（时隙 ALOHA）
   uint32_t _regBurstUntilMs = 0;   // 网关：注册突发窗口保持到什么时刻
   bool _verWarned = false;         // 信标协议版本不匹配只告警一次（避免刷屏）
+  // 2026-09-13：信道记忆（NVS）+ 开局连续重试 + 掉线两级超时
+  uint8_t _stickyCh = 0xFF;        // 上次成功锁定的信道（NVS 记忆，开机先试它）
+  bool _stickyLoaded = false;      // 是否已从 NVS 读过
+  uint8_t _joinTriesTotal = 0;     // 本次开机已尝试 JOIN 的次数（前几次连续试）
+  uint32_t _dbgCanTxMs = 0;        // canTx 为假的诊断节流
+  // 诊断计数（2026-09-13）：未注册期间每秒打印，用来切开"下行收不到"的两种可能
+  uint8_t _dbgRxBeacon = 0;        // 近 1s 信标窗收到的帧数
+  uint8_t _dbgRxDl = 0;            // 近 1s 下行窗收到的帧数
+  uint32_t _dbgLastMs = 0;
+  // 网关侧诊断（2026-09-13）：每秒打印"设备时隙窗/注册窗各收到几帧"，
+  // 直接回答"上行有没有进来"（两块板作为设备都注册不上时，用它定位是网关收不到，
+  // 还是收到了解析不出来）。
+  uint8_t _dbgGwSlot = 0;
+  uint8_t _dbgGwReg = 0;
+  uint32_t _dbgGwLastMs = 0;
 
   // 网关设备表（每信道）
+  //
+  // ⚠️ 2026-09-13 起：**设备的真正身份是 5 字节 devId 字符串**（枪端由芯片 MAC 派生，
+  //   见 gun/src/main.cpp 的 deriveIdentity），网关按这个串认设备；
+  //   `idx` 是**网关分配的 1 字节短号**（= 时隙号），通过 TF_ASSIGN 的 payload[4] 下发。
+  //   这样"自报 devIdx 撞号 → 两台设备被当成一台"的问题从根上消失（短号由网关统一分配）。
+  //   寻址规则：ASSIGN 发往 `lastJoinIdx`（设备最近一次 JOIN 里用的号，即它"当前认识到的
+  //   自己的号"）—— 这样无论设备是否已采用新号，它都能收到。
   struct GwDev {
-    uint8_t idx;
+    uint8_t idx;             // 网关分配的短号（= slot）
     uint8_t slot;
+    uint8_t lastJoinIdx;     // 最近一次 JOIN 帧里的 devIdx（寻址 ASSIGN 用）
+    char devId[6];           // 5 字节身份串 + '\0'（MAC 派生，唯一）
     uint32_t lastSeenMs;
     uint32_t lastAssignMs;   // 最近一次给它发 ASSIGN 的时刻（补发节流用）
+    bool warned;             // 已打过"心跳丢失"预警（两级超时）
     bool valid;
   };
   GwDev _gw[17];

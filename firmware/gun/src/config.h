@@ -1,8 +1,18 @@
 #pragma once
 
-// ===== 设备身份 =====
-#define DEV_IDX 1                // 8 位短设备号（0~255，每把枪唯一；网关据此识别发送者）
-#define DEVICE_ID "G0001"        // 每把枪唯一，网关/服务器据此区分
+// ===== 设备身份（**默认自动派生，换板无需重编固件**）=====
+// 身份 = 芯片 eFuse MAC 派生出的 5 字节 deviceId（**以 'G' 开头标明枪端**）+ 1 字节 devIdx。
+// 同一块板恒定不变；头盔用 'H' 前缀区分角色。实现见 main.cpp 的 deriveIdentity()。
+// 只有需要"钉死"身份（对照实验等）时才用 -D 覆盖：
+//     -D DEV_IDX=2  -D DEVICE_ID=\"G0002\"
+// ⚠️ 多台设备**绝不能**用同一个 DEV_IDX —— 网关会当成同一台设备（时隙/心跳/命中归属全乱）。
+//    自动派生已避免人为重复；devIdx 的 8 位碰撞问题见 main.cpp 顶部说明。
+#ifndef DEV_IDX
+#define DEV_IDX 0                // 0 = 自动从 MAC 派生
+#endif
+#ifndef DEVICE_ID
+#define DEVICE_ID ""             // 空 = 自动派生（"G" + 4 位 base32）
+#endif
 #define DEVICE_NAME "玩家A"       // 显示名，可在 J 帧中由 AT 配置覆盖
 #define FW_VERSION "1.0.0"
 
