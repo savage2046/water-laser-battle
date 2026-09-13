@@ -42,7 +42,7 @@ POS 分片 flags：片0=`FIRST|MORE`，片1=`MORE`，片2=无。网关按 devIdx
 
 | type | 名称 | payload[0..4] |
 | --- | --- | --- |
-| 0x00 BEACON | 信标（广播） | 超帧计数(**3B BE**) \| `mapVer<<5 \| N` \| 标志字节：**低 2 位 = 注册窗子槽数**（1 或 3），其余备用。<br>**N** 同时用作设备注册时的信道负载均衡依据；**子槽数**用于两端算出相同的超帧长度（`T_BE+T_DL+N×T_SLOT+regSlots×T_REG+T_SF_TAIL`）。<br>⚠️ **2026-09-13 改版**：原为「超帧计数 4B + mapVer/N 1B」，为广播注册窗子槽数把计数压到 3B（5 超帧/s 也需 38 天才回绕）。**两端必须同版本固件**；`lora-gwtest` / `gun-selftest` 各自带独立 MAC 副本、未同步此改动 → 与正式固件**不再互通** |
+| 0x00 BEACON | 信标（广播） | **协议 v3**：超帧计数(**2B BE**，21 信标/s → 52 分钟回绕) \| `(信道号<<3) \| (注册窗子槽数&7)` \| `mapVer<<5 \| N` \| **协议版本(1B)**。<br>**信道号**是 v3 的关键：设备**采信信标自报的信道号**（不再"从听到的频点反推"）—— 两板近场时邻道泄漏会让设备在错频点上解出信标（实测网关 474MHz、设备在 472MHz 收到），反推必然锁错信道。**N** 用作注册时的信道负载均衡依据；**子槽数**用于两端算出相同超帧长度。<br>⚠️ 版本历史：v1 计数 3B + `(ver<<2)\|regSlots`；v2 = v1 + ASSIGN 带分配号；v3 = 本布局。**混版本会明确报警**（`BAD beacon proto ver=…`），可放心排查。 |
 | 0x0B WELCOME | 欢迎/规则（3 片） | 见下 |
 | 0x0C START | 对局开始（广播） | mode（预留 0） |
 | 0x0D END | 对局结束（广播） | winner（0xFF=平局） |
@@ -51,7 +51,7 @@ POS 分片 flags：片0=`FIRST|MORE`，片1=`MORE`，片2=无。网关按 devIdx
 | 0x10 RESUME | 恢复（广播） | 全 0 |
 | 0x11 XHIT | 外部命中 | shooter(2B BE) \| weapon \| shotSeq \| channel |
 | 0x12 VITAL | 生命同步 | playerId(2B BE) \| hp \| alive |
-| 0x13 ASSIGN | 信道+时隙分配 | channelIdx \| slot \| N \| mapVer \| spare（slot=0xFF=信道满） |
+| 0x13 ASSIGN | 信道+时隙分配 | `channelIdx` \| `slot` \| `N` \| `mapVer` \| **`assignedIdx`**（网关分配的 devIdx；`slot=0xFF` 表示信道满时该字节=0xFF）<br>⚠️ **2026-09-13（协议 v2）**：第 5 字节由备用改为"**网关分配的短号**"。设备用 **MAC 派生的 5 字节身份串**注册（见 J 帧 payload），1 字节短号改由网关分配并在此下发 —— devIdx 的 8 位碰撞因此不再影响设备识别。ASSIGN 发往设备"**当前自报的号**"（网关记录 `lastJoinIdx`），设备无论是否已采用新号都能收到。 |
 
 WELCOME 3 片（flags：片0=`FIRST|MORE`，片1=`MORE`，片2=无）：
 - 片0：playerId(2B BE) \| hp \| dmg \| ammo
