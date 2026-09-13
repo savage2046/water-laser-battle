@@ -124,6 +124,7 @@ class TdmaMac {
   uint8_t _regSlots = 1;
   uint8_t _joinCountdown = 0;      // 设备：还有几个超帧才轮到下次 JOIN 尝试（时隙 ALOHA）
   uint32_t _regBurstUntilMs = 0;   // 网关：注册突发窗口保持到什么时刻
+  bool _verWarned = false;         // 信标协议版本不匹配只告警一次（避免刷屏）
 
   // 网关设备表（每信道）
   struct GwDev {

@@ -61,6 +61,17 @@ enum {
 #define TDMA_STD_STEP_MHZ 2.0f
 #define TDMA_STD_CHANNELS 20
 
+// ===== 信标协议版本（2026-09-13 新增：防"两端/各处解析不一致"这种无声故障）=====
+// 随信标 payload[4] 的高 6 位（bit7..2）广播；低 2 位放注册窗子槽数。
+// 设备解析信标时**校验此版本**，不匹配就不当作本网信标并明确告警。
+//
+// ⚠️ 为什么必须有它：信标 payload 布局变过一次（计数器 4B→3B）。当时发送端与
+//    `lockFromBeacon` 改了，但扫描用的 `dwellBeacon` **漏改**，仍按 4 字节读计数器
+//    → 读到 `≈计数器<<8`，相邻信标差 256 而非 1 → "确证"判定永远失败、候选全被标
+//    "未确证"（实测现象）。有版本号后，任何一处解析不一致都会**直接报出来**。
+// **改动信标/帧格式时必须递增此值。**
+#define TDMA_PROTO_VER 1
+
 // CRC-8/ATM：poly 0x07，init 0，无反射
 uint8_t tdmaCrc8(const uint8_t *data, size_t len);
 

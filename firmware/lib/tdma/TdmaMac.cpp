@@ -207,16 +207,18 @@ void TdmaMac::txFrame(const TdmaFrame &f) {
 }
 
 void TdmaMac::lockFromBeacon(const TdmaFrame &f, uint32_t rxEndUs) {
+  const uint8_t flags = f.payload[4];
+  if ((uint8_t)(flags >> 2) != TDMA_PROTO_VER) return;   // 版本不符：不锁相（已在扫描时告警）
   _sfStartUs = rxEndUs - T_AIR;  // 估算信标 TX 起点 = 超帧起点
-  // ⚠️ 2026-09-13 信标 payload 布局调整（腾出一个字节放注册窗标志）：
+  // 信标 payload 布局（2026-09-13 起，**改动必须递增 TDMA_PROTO_VER**）：
   //   payload[0..2] = 超帧计数器（24 位；5 超帧/s 也要 38 天才回绕）
   //   payload[3]    = (mapVer << 5) | (N & 0x1F)
-  //   payload[4]    = 标志字节：低 2 位 = 注册窗子槽数（1 或 3），其余备用
+  //   payload[4]    = (协议版本 << 2) | (注册窗子槽数 & 0x03)
   _sfCounter = ((uint32_t)f.payload[0] << 16) | ((uint32_t)f.payload[1] << 8) |
                f.payload[2];
   _n = f.payload[3] & 0x1F;                      // 当前设备数（自适应）
   _beaconMapVer = (uint8_t)(f.payload[3] >> 5);  // 映射版本
-  _regSlots = (uint8_t)(f.payload[4] & 0x03);    // 注册窗子槽数（算超帧长度用）
+  _regSlots = (uint8_t)(flags & 0x03);           // 注册窗子槽数（算超帧长度用）
   if (_regSlots == 0) _regSlots = 1;
   _locked = true;
 }
@@ -263,13 +265,26 @@ bool TdmaMac::dwellBeacon(uint8_t c, uint8_t &nOut, uint8_t &countOut,
     TdmaFrame f;
     if (!readPacketPoll(f, deadline)) break;   // 窗内不再有帧
     if (f.type != TF_BEACON) continue;         // 非信标：继续等，不能就此换频点
-    const uint32_t ctr = ((uint32_t)f.payload[0] << 24) |
-                         ((uint32_t)f.payload[1] << 16) |
-                         ((uint32_t)f.payload[2] << 8) | f.payload[3];
-    if (havePrev && ctr == prev + 1) ctrOk = true;   // 逐一递增 = 真网关
+    // 协议版本校验：不匹配就不计入（否则会拿错位的字节算出假证据）
+    if ((uint8_t)(f.payload[4] >> 2) != TDMA_PROTO_VER) {
+      if (!_verWarned) {
+        _verWarned = true;
+        Serial.printf("[tdma] ❌ 信标协议版本不匹配：收到 ver=%u，本机 ver=%u —— "
+                      "对端固件版本不同（网关/枪端请一并重烧）！\n",
+                      (unsigned)(f.payload[4] >> 2), (unsigned)TDMA_PROTO_VER);
+      }
+      continue;
+    }
+    // ⚠️ 计数器是**3 字节**（payload[0..2]，2026-09-13 起）。此处曾漏改仍按 4 字节读，
+    //    导致值 ≈ `计数器<<8`、相邻信标差 256 而非 1 → "确证"永远失败。
+    const uint32_t ctr = ((uint32_t)f.payload[0] << 16) |
+                         ((uint32_t)f.payload[1] << 8) | f.payload[2];
+    // "递增且跨度小"即算连续：**不能要求恰好 +1**（漏掉 1~2 个信标很常见，实测就因此
+    // 把真网关判成"未确证"）。跨度 ≤16 也足以排除无关杂散/别家信号。
+    if (havePrev && ctr > prev && (ctr - prev) <= 16) ctrOk = true;
     prev = ctr;
     havePrev = true;
-    nOut = (uint8_t)(f.payload[4] & 0x1F);
+    nOut = (uint8_t)(f.payload[3] & 0x1F);   // N 在 payload[3] 低 5 位
     cnt++;
   }
   countOut = cnt;
@@ -688,7 +703,9 @@ void TdmaMac::runGateway() {
   b.payload[1] = (uint8_t)(c >> 8);
   b.payload[2] = (uint8_t)c;
   b.payload[3] = (uint8_t)((_mapVer << 5) | (_n & 0x1F));
-  b.payload[4] = (uint8_t)(_regSlots & 0x03);   // 注册窗子槽数（1 或 3）
+  // payload[4]：高 6 位 = 协议版本（设备据此拒绝解读不同版本的信标，见 TdmaProto.h）
+  //              低 2 位 = 注册窗子槽数（1 或 3）
+  b.payload[4] = (uint8_t)((TDMA_PROTO_VER << 2) | (_regSlots & 0x03));
   // 相位基准：**实际信标空口起点**（设备端 lockFromBeacon 也是以信标空口起点
   // 为准的），不再用本地预定时刻 sfStart —— 这样两端相位天然一致。
   const uint32_t bcStart = micros();
